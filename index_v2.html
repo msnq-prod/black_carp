@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="Black Carp — авторские графические татуировки в Хабаровске. Цифровая галерея работ."
+    />
+    <title>Black Carp — авторская графика</title>
+    
+    <!-- Preconnect to Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Load Cormorant Garamond (Serif) and Inter (Sans-serif) -->
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+
+    <link rel="preload" as="image" href="assets/media/hero-forearm.png" />
+    <link rel="stylesheet" href="styles_v2.css" />
+  </head>
+  <body>
+    <!-- Grain overlay placed behind interactive elements via lower z-index / pointer-events -->
+    <div class="grain" aria-hidden="true"></div>
+
+    <main class="app-shell" id="app">
+      <!-- VIEW: HOME -->
+      <section class="view view-home is-active" id="view-home" aria-label="Главная">
+        <header class="hero scene scene-full">
+          <video
+            class="hero__media"
+            autoplay
+            muted
+            loop
+            playsinline
+            preload="metadata"
+            poster="assets/media/hero-forearm.png"
+            aria-label="Видео с процессом создания татуировки"
+          >
+            <source src="assets/media/hero-video.mp4" type="video/mp4" />
+          </video>
+          <div class="scene-vignette" aria-hidden="true"></div>
+          <div class="hero__topline">BLACK CARP</div>
+          <div class="hero__content">
+            <h1 class="hero__title">BLACK CARP</h1>
+            <p class="hero__subtitle">Авторская графика&nbsp;·&nbsp;Хабаровск</p>
+            <a class="line-cta" href="#/booking">
+              <span>Записаться на&nbsp;консультацию</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true" width="24" height="24">
+                <path d="M5 12h13M13 6l6 6-6 6" />
+              </svg>
+            </a>
+          </div>
+        </header>
+
+        <section class="editorial-intro">
+          <div class="featured-work">
+            <img src="assets/media/work-shoulder.png" alt="Графическая татуировка на плече" loading="lazy" />
+          </div>
+          <div class="editorial-text">
+            <h2 class="serif-title">Авторская графика без&nbsp;готовых шаблонов</h2>
+            <p class="editorial-desc">
+              Каждый эскиз создаётся индивидуально, учитывая анатомию, масштаб и&nbsp;естественные линии вашего тела.
+            </p>
+          </div>
+        </section>
+
+        <!-- Selected Works Gallery -->
+        <section class="featured-gallery">
+          <span class="section-label">Избранные работы</span>
+          <div class="gallery-slider">
+            <article class="gallery-item">
+              <img src="assets/media/hero-forearm.png" alt="Nocturne I - татуировка на предплечье" loading="lazy" />
+              <div class="gallery-item-caption">
+                <h4>Nocturne I</h4>
+                <p>forearm / graphic / 2026</p>
+              </div>
+            </article>
+            <article class="gallery-item">
+              <img src="assets/media/work-shoulder.png" alt="Arc Study - татуировка на спине" loading="lazy" />
+              <div class="gallery-item-caption">
+                <h4>Arc Study</h4>
+                <p>back / graphic / 2026</p>
+              </div>
+            </article>
+            <article class="gallery-item">
+              <img src="assets/media/work-detail.png" alt="Quiet Line - детальный фрагмент татуировки" loading="lazy" />
+              <div class="gallery-item-caption">
+                <h4>Quiet Line</h4>
+                <p>arm detail / fine line / 2026</p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <!-- Master's Approach Section -->
+        <section class="master-approach">
+          <div class="approach-inner">
+            <span class="section-label">Философия</span>
+            <h2 class="serif-title">Анатомический поток</h2>
+            <p class="editorial-desc">
+              Каждая линия наносится с&nbsp;уважением к&nbsp;естественной пластике вашего тела. Я&nbsp;не&nbsp;работаю по&nbsp;готовым шаблонам из&nbsp;интернета и&nbsp;не&nbsp;копирую чужие эскизы. Татуировка должна продолжать контуры мышц, гармонично распределять визуальный вес и&nbsp;выглядеть эстетично спустя годы.
+            </p>
+          </div>
+        </section>
+
+        <section class="pricing-statement">
+          <div class="featured-work">
+            <img src="assets/media/hero-forearm.png" alt="Процесс татуировки на предплечье" loading="lazy" />
+          </div>
+          <div class="editorial-text">
+            <h2 class="serif-title">Стоимость от&nbsp;7&nbsp;000&nbsp;₽</h2>
+            <p class="editorial-desc">
+              Финальная стоимость проекта рассчитывается персонально и&nbsp;зависит от&nbsp;сложности, детализации и&nbsp;размера работы.
+            </p>
+          </div>
+        </section>
+
+        <!-- Redesigned Info Accordion (Consultation, Prep, Contraindications, Aftercare) -->
+        <section class="info-accordion">
+          <span class="section-label">Справочник</span>
+          <h2 class="serif-title">Детали процесса</h2>
+          <div class="accordion-list">
+            <details class="accordion-item" open>
+              <summary class="accordion-trigger">
+                <span>Консультация</span>
+                <svg class="accordion-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/>
+                </svg>
+              </summary>
+              <div class="accordion-content">
+                <p>Проходит онлайн в&nbsp;Telegram-чате. Мы&nbsp;обсуждаем задумку, желаемое место нанесения и&nbsp;примерный масштаб. На&nbsp;основе этого мастер предлагает варианты расположения и&nbsp;согласует бюджет.</p>
+              </div>
+            </details>
+            <details class="accordion-item">
+              <summary class="accordion-trigger">
+                <span>Подготовка к сеансу</span>
+                <svg class="accordion-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/>
+                </svg>
+              </summary>
+              <div class="accordion-content">
+                <p>За&nbsp;сутки полностью исключите алкоголь и&nbsp;энергетики (они увеличивают кровотечение и&nbsp;вымывают пигмент). Хорошо выспитесь и&nbsp;плотно поешьте перед сеансом. Рекомендуется надеть комфортную темную одежду.</p>
+              </div>
+            </details>
+            <details class="accordion-item">
+              <summary class="accordion-trigger">
+                <span>Противопоказания</span>
+                <svg class="accordion-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/>
+                </svg>
+              </summary>
+              <div class="accordion-content">
+                <p>Абсолютные: гемофилия, диабет I&nbsp;типа, тяжелые заболевания кожи, эпилепсия, онкология. Временные: ОРВИ, температура, алкогольное опьянение, воспалительные процессы на&nbsp;коже в&nbsp;зоне нанесения.</p>
+              </div>
+            </details>
+            <details class="accordion-item">
+              <summary class="accordion-trigger">
+                <span>Уход и заживление</span>
+                <svg class="accordion-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/>
+                </svg>
+              </summary>
+              <div class="accordion-content">
+                <p>Мастер зафиксирует татуировку специальной дышащей пленкой Suprasorb-F на&nbsp;5&nbsp;дней. После снятия необходимо промывать тату теплой водой с&nbsp;мылом и&nbsp;увлажнять заживляющим кремом до&nbsp;полной регенерации кожи.</p>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <section class="cta-banner">
+          <div class="featured-work featured-work--short">
+            <img src="assets/media/sketch-process.png" alt="Эскиз в процессе разработки" loading="lazy" />
+          </div>
+          <div class="cta-banner__content">
+            <a class="line-cta" href="#/booking">
+              <span>Начать диалог с&nbsp;мастером</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true" width="24" height="24">
+                <path d="M5 12h13M13 6l6 6-6 6" />
+              </svg>
+            </a>
+          </div>
+        </section>
+
+        <footer class="app-footer">
+          <div class="footer-socials">
+            <a href="https://t.me/blackcarp_bot" target="_blank" rel="noopener noreferrer" aria-label="Telegram">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M21 4 3.8 10.9c-.9.4-.9 1.7.1 2l4.4 1.3 1.7 5c.3.9 1.5 1 2 .2l2.3-3.1 4.5 3.3c.8.6 1.9.1 2-1L22.5 5.3c.1-.9-.7-1.6-1.5-1.3Z" />
+                <path d="m8.4 14.2 8.4-6.4" />
+              </svg>
+            </a>
+            <a href="https://instagram.com/blackcarp" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect width="20" height="20" x="2" y="2" rx="5" ry="5" />
+                <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37ZM17.5 6.5h.01" />
+              </svg>
+            </a>
+            <a href="https://vk.com/blackcarp" target="_blank" rel="noopener noreferrer" aria-label="VK">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M21.579 6.855c.14-.465 0-.806-.662-.806h-2.193c-.558 0-.813.295-.953.619 0 0-1.115 2.719-2.695 4.482-.51.513-.743.675-1.021.675-.139 0-.341-.162-.341-.627V6.855c0-.558-.161-.806-.626-.806H9.642c-.348 0-.626.255-.626.577 0 .61.859.751 1.053 2.502.133 1.206.133 2.151.133 2.151 0 .647-.215.751-.53.751-.139 0-.419-.07-.743-.372-1.077-1.07-2.607-3.662-2.607-3.662-.23-.465-.486-.619-.953-.619H2.868c-.662 0-.802.268-.802.619 0 .577.72 3.444 3.354 7.234 1.745 2.502 4.195 3.864 6.46 3.864h1.396c.662 0 .953-.268.953-.619v-1.745c0-.61.279-.751.626-.751.348 0 .766.162 1.954 1.34 1.396 1.396 1.626 2.025 2.457 2.025h2.193c.662 0 .953-.302.766-.954-.23-.619-1.053-1.61-2.193-2.909-.23-.279-.626-.577-.766-.751-.14-.176-.14-.419 0-.61 0 0 1.954-2.8 2.193-3.793z" />
+              </svg>
+            </a>
+          </div>
+          <p class="footer-copy">© 2026 BLACK CARP</p>
+        </footer>
+      </section>
+
+      <!-- VIEW: WORKS (GALLERY) -->
+      <section class="view view-works" id="view-works" aria-label="Работы">
+        <h1 class="visually-hidden">Работы мастера Black Carp</h1>
+        <!-- Works feed will be dynamically populated by script_v2.js -->
+        <div class="works-feed" id="worksFeed"></div>
+      </section>
+
+      <!-- VIEW: BOOKING -->
+      <section class="view view-booking" id="view-booking" aria-label="Запись">
+        <div class="booking-screen">
+          <div class="telegram-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="36" height="36">
+              <path d="M21 4 3.8 10.9c-.9.4-.9 1.7.1 2l4.4 1.3 1.7 5c.3.9 1.5 1 2 .2l2.3-3.1 4.5 3.3c.8.6 1.9.1 2-1L22.5 5.3c.1-.9-.7-1.6-1.5-1.3Z" />
+              <path d="m8.4 14.2 8.4-6.4" />
+            </svg>
+          </div>
+          
+          <span class="screen-label">Консультация</span>
+          <h2 class="serif-title">Создадим ваш проект</h2>
+          
+          <div class="booking-details">
+            <p>
+              Каждая татуировка уникальна. Чтобы обсудить идею, примерные размеры и&nbsp;выбрать время сеанса, мы&nbsp;проводим онлайн-консультацию.
+            </p>
+            <ul class="booking-features">
+              <li>
+                <strong>Разработка концепта</strong>
+                <span>Эскиз подгоняется по&nbsp;фотографии вашего тела для&nbsp;идеальной посадки.</span>
+              </li>
+              <li>
+                <strong>Прозрачный процесс</strong>
+                <span>Ответим на&nbsp;любые вопросы по&nbsp;подготовке, уходу и&nbsp;заживлению.</span>
+              </li>
+            </ul>
+          </div>
+          
+          <a class="line-cta line-cta--center" href="https://t.me/blackcarp_bot" target="_blank" rel="noopener noreferrer">
+            <span>Написать в Telegram</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true" width="24" height="24">
+              <path d="M5 12h13M13 6l6 6-6 6" />
+            </svg>
+          </a>
+        </div>
+      </section>
+
+      <!-- VIEW: PROFILE -->
+      <section class="view view-profile" id="view-profile" aria-label="Профиль">
+        <div class="profile-screen">
+          <div class="profile-locked-state">
+            <div class="lock-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+            
+            <span class="screen-label">Личный кабинет</span>
+            <h2 class="serif-title">Кабинет клиента</h2>
+            
+            <p class="profile-locked-desc">
+              Авторизуйтесь через Telegram, чтобы отслеживать статус вашей записи, видеть запланированные сеансы и&nbsp;персональные рекомендации по&nbsp;уходу.
+            </p>
+            
+            <div class="profile-card-preview" aria-hidden="true">
+              <div class="preview-row"></div>
+              <div class="preview-row short"></div>
+              <div class="preview-row"></div>
+            </div>
+
+            <a class="line-cta line-cta--center" href="https://t.me/blackcarp_bot" target="_blank" rel="noopener noreferrer">
+              <span>Войти через Telegram</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true" width="24" height="24">
+                <path d="M5 12h13M13 6l6 6-6 6" />
+              </svg>
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- BOTTOM NAVIGATION: Fully thumb-accessible and semantically stable -->
+    <nav class="bottom-nav" aria-label="Основная навигация">
+      <a href="#/home" class="nav-item is-active" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          <polyline points="9 22 9 12 15 12 15 22" />
+        </svg>
+        <span>Главная</span>
+      </a>
+      <a href="#/works" class="nav-item">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+          <circle cx="8.5" cy="8.5" r="1.5" />
+          <polyline points="21 15 16 10 5 21" />
+        </svg>
+        <span>Работы</span>
+      </a>
+      <a href="#/booking" class="nav-item">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+        <span>Запись</span>
+      </a>
+      <a href="#/profile" class="nav-item">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
+        <span>Профиль</span>
+      </a>
+    </nav>
+
+    <script src="script_v2.js"></script>
+  </body>
+</html>
