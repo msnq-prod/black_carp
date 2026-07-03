@@ -106,44 +106,17 @@ app.post("/api/booking/submit", async (req, res) => {
       );
     }
 
-    appendStatus(requestId, null, "submitted", "system", null, "Анкета сохранена с сайта");
+    appendStatus(requestId, null, "awaiting_client_start", "system", null, "Анкета сохранена с сайта");
 
-    const notifyResult = await notifyMaster({
-      ...payload,
-      requestId,
-      publicCode,
-      priceEstimate,
-      attachmentCount: attachments.length
-    });
-
-    const nextStatus = notifyResult.ok ? "awaiting_client_start" : "master_notify_failed";
-    db.prepare(`
-      UPDATE booking_requests
-      SET status = ?, master_notified_at = ?, master_notify_error = ?, updated_at = ?
-      WHERE id = ?
-    `).run(
-      nextStatus,
-      notifyResult.ok ? now : null,
-      notifyResult.ok ? null : notifyResult.error,
-      new Date().toISOString(),
-      requestId
-    );
-
-    appendStatus(
-      requestId,
-      "submitted",
-      nextStatus,
-      "system",
-      null,
-      notifyResult.ok ? "Мастер уведомлен" : "Не удалось уведомить мастера"
-    );
+    db.prepare("UPDATE booking_requests SET status = 'awaiting_client_start', updated_at = ? WHERE id = ?")
+      .run(now, requestId);
 
     res.json({
       ok: true,
       requestId,
       publicCode,
       telegramUrl: telegramStartUrl(publicCode),
-      masterNotified: notifyResult.ok
+      masterNotified: false
     });
   } catch (error) {
     console.error("booking_submit_error", error);
@@ -171,6 +144,9 @@ app.post("/telegram/webhook", async (req, res) => {
     if (update.message?.text?.startsWith("/start")) {
       eventType = "start";
       requestId = await handleStart(update.message);
+    } else if (update.message?.text) {
+      eventType = "client_message";
+      requestId = await handleClientMessage(update.message);
     } else if (update.callback_query) {
       eventType = "callback";
       requestId = await handleCallback(update.callback_query);
@@ -233,13 +209,17 @@ app.listen(port, () => {
 async function handleStart(message) {
   const publicCode = message.text.split(/\s+/)[1]?.trim();
   if (!publicCode) {
-    await sendTelegramMessage(message.chat.id, "Здравствуйте. Чтобы мастер получил анкету, заполните форму на сайте Black Carp.", {
-      inline_keyboard: [[{ text: "Перейти к анкете", url: siteUrl() }]]
+    await sendTelegramMessage(message.chat.id, [
+      "Здравствуйте.",
+      "",
+      "Чтобы создать запись, пожалуйста, сначала заполните анкету на сайте Black Carp."
+    ].join("\n"), {
+      inline_keyboard: [[{ text: "Перейти на сайт", url: `${siteUrl()}#/booking` }]]
     });
     return null;
   }
 
-  const booking = db.prepare("SELECT id, status FROM booking_requests WHERE public_code = ?").get(publicCode);
+  const booking = db.prepare("SELECT * FROM booking_requests WHERE public_code = ?").get(publicCode);
   if (!booking) {
     await sendTelegramMessage(message.chat.id, "Заявка не найдена. Пожалуйста, заполните анкету заново.", {
       inline_keyboard: [[{ text: "Перейти к анкете", url: `${siteUrl()}#/booking` }]]
@@ -251,17 +231,17 @@ async function handleStart(message) {
   const clientId = upsertClient(message.from, message.chat.id, now);
   db.prepare(`
     UPDATE booking_requests
-    SET client_id = ?, status = 'client_linked', telegram_opened_at = ?, updated_at = ?
+    SET client_id = ?, status = 'client_linked', telegram_opened_at = COALESCE(telegram_opened_at, ?), updated_at = ?
     WHERE id = ?
   `).run(clientId, now, now, booking.id);
 
   appendStatus(booking.id, booking.status, "client_linked", "client", String(message.from.id), "Клиент открыл Telegram-бота");
 
   await sendTelegramMessage(message.chat.id, [
-    "Ваша анкета получена.",
+    "Ваша заявка получена.",
     "",
-    "Мастер уже видит идею, зону, размер и референсы.",
-    "Здесь можно продолжить диалог и уточнить детали консультации."
+    "Мастер скоро свяжется с вами для утверждения заявки.",
+    "Если хотите, отправьте сюда дополнительные комментарии одним сообщением."
   ].join("\n"), {
     inline_keyboard: [
       [{ text: "Открыть сайт", url: siteUrl() }],
@@ -269,11 +249,77 @@ async function handleStart(message) {
     ]
   });
 
+  const attachmentCount = db.prepare("SELECT COUNT(*) AS count FROM booking_attachments WHERE request_id = ?")
+    .get(booking.id).count;
+  const notifyResult = await notifyMaster({
+    ...bookingPayloadFromRow(booking),
+    requestId: booking.id,
+    publicCode,
+    attachmentCount,
+    telegramUser: formatTelegramUser(message.from)
+  });
+
+  db.prepare(`
+    UPDATE booking_requests
+    SET master_notified_at = ?, master_notify_error = ?, updated_at = ?
+    WHERE id = ?
+  `).run(
+    notifyResult.ok ? now : null,
+    notifyResult.ok ? null : notifyResult.error,
+    new Date().toISOString(),
+    booking.id
+  );
+
+  appendStatus(
+    booking.id,
+    "client_linked",
+    notifyResult.ok ? "master_notified" : "master_notify_failed",
+    "system",
+    null,
+    notifyResult.ok ? "Мастер уведомлен после перехода клиента в Telegram" : "Не удалось уведомить мастера"
+  );
+
+  return booking.id;
+}
+
+async function handleClientMessage(message) {
+  const text = normalizeText(message.text);
+  if (!text) return null;
+
+  const client = db.prepare("SELECT id FROM clients WHERE telegram_user_id = ?").get(message.from?.id);
+  if (!client) {
+    await sendTelegramMessage(message.chat.id, [
+      "Чтобы мастер увидел комментарий, сначала создайте заявку на сайте."
+    ].join("\n"), {
+      inline_keyboard: [[{ text: "Перейти на сайт", url: `${siteUrl()}#/booking` }]]
+    });
+    return null;
+  }
+
+  const booking = db.prepare(`
+    SELECT id, public_code
+    FROM booking_requests
+    WHERE client_id = ?
+    ORDER BY COALESCE(telegram_opened_at, created_at) DESC
+    LIMIT 1
+  `).get(client.id);
+
+  if (!booking) {
+    await sendTelegramMessage(message.chat.id, "Заявка не найдена. Пожалуйста, заполните анкету на сайте.", {
+      inline_keyboard: [[{ text: "Перейти на сайт", url: `${siteUrl()}#/booking` }]]
+    });
+    return null;
+  }
+
   await notifyMasterText([
-    `Клиент открыл бота и связан с заявкой #${publicCode}.`,
-    `Telegram: ${formatTelegramUser(message.from)}`
+    `Дополнительный комментарий к заявке #${booking.public_code}`,
+    `Клиент: ${formatTelegramUser(message.from)}`,
+    "",
+    text
   ].join("\n"));
 
+  appendStatus(booking.id, null, "client_comment", "client", String(message.from.id), text);
+  await sendTelegramMessage(message.chat.id, "Комментарий передан мастеру.");
   return booking.id;
 }
 
@@ -468,7 +514,8 @@ function masterCardText(payload) {
   return [
     `Новая заявка Black Carp #${payload.publicCode}`,
     "",
-    "Статус: анкета отправлена, клиент переходит в Telegram",
+    "Статус: клиент перешел в Telegram после анкеты",
+    payload.telegramUser ? `Клиент: ${payload.telegramUser}` : null,
     "",
     `Опыт: ${experience}`,
     `У мастера ранее: ${master}`,
@@ -481,7 +528,22 @@ function masterCardText(payload) {
     idea,
     "",
     `Вложения: ${payload.attachmentCount || 0}`
-  ].join("\n");
+  ].filter((line) => line !== null).join("\n");
+}
+
+function bookingPayloadFromRow(row) {
+  return {
+    firstTattoo: row.first_tattoo,
+    beenToMaster: row.been_to_master,
+    hasSketch: Boolean(row.has_sketch),
+    bodyZone: row.body_zone,
+    bodySubzone: row.body_subzone,
+    bodyView: row.body_view,
+    sizePreset: row.size_preset,
+    sizeCm: row.size_cm,
+    ideaText: row.idea_text,
+    priceEstimate: row.price_estimate
+  };
 }
 
 function estimatePrice(payload) {
