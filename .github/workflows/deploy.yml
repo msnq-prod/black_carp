@@ -23,8 +23,4 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script_stop: true
           script: |
-            set -eu
-            cd /srv/www/black-carp
-            export GIT_SSH_COMMAND="ssh -i /home/blackcarp-deploy/.ssh/black_carp_github -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-            git fetch origin main
-            git reset --hard origin/main
+            /usr/local/bin/black-carp-deploy
