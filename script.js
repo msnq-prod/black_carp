@@ -3,6 +3,19 @@ const navButtons = [...document.querySelectorAll("[data-nav]")];
 const openButtons = [...document.querySelectorAll("[data-open-view]")];
 const app = document.querySelector("#app");
 const worksFeed = document.querySelector("#worksFeed");
+const routeModal = document.querySelector("[data-route-modal]");
+const routeOpenButtons = [...document.querySelectorAll("[data-open-route-gallery]")];
+const routeCloseButtons = [...document.querySelectorAll("[data-route-close]")];
+const bookingApiBase = (
+  window.BLACK_CARP_API_BASE ||
+  document.querySelector('meta[name="black-carp-api-base"]')?.content ||
+  ""
+).replace(/\/$/, "");
+const bookingBotUsername = (
+  window.BLACK_CARP_BOT_USERNAME ||
+  document.querySelector('meta[name="black-carp-bot-username"]')?.content ||
+  "blackcarp_bot"
+).replace(/^@/, "");
 const viewTitles = {
   home: "Black Carp — авторская графика",
   works: "Работы — Black Carp",
@@ -109,6 +122,34 @@ openButtons.forEach((button) => {
   button.addEventListener("click", () => setView(button.dataset.openView));
 });
 
+function openRouteModal() {
+  if (!routeModal) return;
+  routeModal.hidden = false;
+  routeModal.setAttribute("aria-hidden", "false");
+  document.body.style.overflow = "hidden";
+}
+
+function closeRouteModal() {
+  if (!routeModal) return;
+  routeModal.hidden = true;
+  routeModal.setAttribute("aria-hidden", "true");
+  document.body.style.overflow = "";
+}
+
+routeOpenButtons.forEach((button) => {
+  button.addEventListener("click", openRouteModal);
+});
+
+routeCloseButtons.forEach((button) => {
+  button.addEventListener("click", closeRouteModal);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && routeModal && !routeModal.hidden) {
+    closeRouteModal();
+  }
+});
+
 
 // ==========================================
 // Booking Wizard Controller
@@ -124,12 +165,12 @@ const wizardState = {
   bodySubzone: null,
   bodyView: "front",
   sizePreset: null,
-  sizeCm: 15,
+  sizeCm: null,
   ideaText: "",
   referenceImages: []
 };
 
-let wizardHistory = [1];
+let wizardHistory = [2];
 
 const subzonesData = {
   head: ["Шея", "За ухом", "Голова"],
@@ -177,7 +218,7 @@ const subzonesList = document.getElementById("subzonesList");
 const selectedZoneName = document.getElementById("selectedZoneName");
 const btnBackToSilhouette = document.getElementById("btnBackToSilhouette");
 const sizeSliderVal = document.getElementById("sizeSliderVal");
-const sizeRangeInput = document.getElementById("sizeRangeInput");
+const visualizerPhoneBox = document.getElementById("visualizerPhoneBox");
 const visualizerTattooBox = document.getElementById("visualizerTattooBox");
 const sizeNextBtn = document.getElementById("sizeNextBtn");
 const sketchInput = document.getElementById("sketchInput");
@@ -196,6 +237,7 @@ const wizardPriceEstimate = document.getElementById("wizardPriceEstimate");
 const wizardSubmitBtn = document.getElementById("wizardSubmitBtn");
 const wizardRestartBtn = document.getElementById("wizardRestartBtn");
 const wizardToast = document.getElementById("wizardToast");
+const bookingConsent = document.getElementById("bookingConsent");
 
 // Compression utility
 function compressImage(file, callback) {
@@ -208,7 +250,7 @@ function compressImage(file, callback) {
       let height = img.height;
       const MAX_WIDTH = 600;
       const MAX_HEIGHT = 600;
-      
+
       if (width > height) {
         if (width > MAX_WIDTH) {
           height *= MAX_WIDTH / width;
@@ -220,7 +262,7 @@ function compressImage(file, callback) {
           height = MAX_HEIGHT;
         }
       }
-      
+
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext("2d");
@@ -232,29 +274,26 @@ function compressImage(file, callback) {
   reader.readAsDataURL(file);
 }
 
-// Progress map step percentages
-const progressMap = {
-  "1": 12.5,
-  "2": 25,
-  "3": 37.5,
-  "4": 50,
-  "4a": 55,
-  "5": 62.5,
-  "6": 75,
-  "7": 87.5,
-  "8": 100
-};
+function getWizardTotalSteps() {
+  const historySteps = wizardHistory.map(String);
+  if (historySteps.length === 1 && historySteps[0] === "2") {
+    return 7;
+  }
+  const masterStep = historySteps.includes("3") || wizardState.firstTattoo === "no" && historySteps.length > 1 ? 1 : 0;
+  const uploadStep = historySteps.includes("4a") || wizardState.hasSketch && historySteps.includes("4") && historySteps.length > 3 ? 1 : 0;
+  return 6 + masterStep + uploadStep;
+}
 
 // Render progress
 function updateProgress(step) {
   if (!wizardProgress) return;
-  const pct = progressMap[step] || 0;
+  const stepIndex = wizardHistory.length;
+  const totalSteps = getWizardTotalSteps();
+  const pct = Math.min(100, Math.max(14, (stepIndex / totalSteps) * 100));
   wizardProgress.style.width = `${pct}%`;
-  
-  // Format visual indicators
-  let stepIndex = wizardHistory.length;
+
   if (wizardStepIndicator) {
-    wizardStepIndicator.textContent = `Шаг ${stepIndex} из 8`;
+    wizardStepIndicator.textContent = `Шаг ${Math.min(stepIndex, totalSteps)} из ${totalSteps}`;
   }
 
   // Control back button visibility
@@ -268,10 +307,10 @@ function updateProgress(step) {
 
   // Render dots
   if (wizardStepDots) {
-    const totalDots = 8;
+    const totalDots = totalSteps;
     let dotsHtml = "";
     for (let i = 1; i <= totalDots; i++) {
-      const isActive = i === stepIndex;
+      const isActive = i === Math.min(stepIndex, totalSteps);
       dotsHtml += `<div class="wizard-dot ${isActive ? "active" : ""}"></div>`;
     }
     wizardStepDots.innerHTML = dotsHtml;
@@ -317,16 +356,16 @@ function resetWizard() {
   wizardState.bodySubzone = null;
   wizardState.bodyView = "front";
   wizardState.sizePreset = null;
-  wizardState.sizeCm = 15;
+  wizardState.sizeCm = null;
   wizardState.ideaText = "";
   wizardState.referenceImages = [];
 
-  wizardHistory = [1];
+  wizardHistory = [2];
 
   // UI Resets
   document.querySelectorAll(".option-card").forEach(c => c.classList.remove("selected"));
   document.querySelectorAll(".size-preset-card").forEach(c => c.classList.remove("selected"));
-  
+
   if (sketchPreviewImg) sketchPreviewImg.src = "";
   if (sketchUploader) {
     sketchUploader.querySelector(".uploader-zone").style.display = "flex";
@@ -338,12 +377,18 @@ function resetWizard() {
     refPreviewsContainer.style.display = "none";
   }
   if (tattooIdeaText) tattooIdeaText.value = "";
-  if (sizeRangeInput) sizeRangeInput.value = 15;
-  if (sizeSliderVal) sizeSliderVal.textContent = "15 см";
-  if (sizeNextBtn) sizeNextBtn.setAttribute("disabled", "true");
+  if (sizeSliderVal) sizeSliderVal.textContent = "";
+  updateSizeVisualizer(null);
+  if (sizeNextBtn) {
+    const label = sizeNextBtn.querySelector("span");
+    if (label) label.textContent = "Продолжить без размера";
+  }
+  if (bookingConsent) bookingConsent.checked = false;
 
   resetBodySilhouette();
-  goToSlide(1);
+  localStorage.removeItem("black_carp_booking_idempotency_key");
+  localStorage.removeItem("black_carp_last_booking");
+  goToSlide(2);
 }
 
 // SVG Silhouette Resets
@@ -353,7 +398,7 @@ function resetBodySilhouette() {
     bodySilhouetteContainer.style.transform = "scale(1)";
   }
   document.querySelectorAll(".body-zone").forEach(z => z.classList.remove("active-zone"));
-  
+
   const container = document.querySelector(".body-map-container");
   if (container) container.classList.remove("zone-selected");
 }
@@ -367,10 +412,10 @@ function initWizard() {
     card.addEventListener("click", () => {
       const val = card.dataset.value;
       wizardState.firstTattoo = val;
-      
+
       document.querySelectorAll(".wizard-slide[data-step='2'] .option-card").forEach(c => c.classList.remove("selected"));
       card.classList.add("selected");
-      
+
       setTimeout(() => {
         const next = card.dataset.next;
         nextStep(next);
@@ -483,7 +528,7 @@ function initWizard() {
       const maxRefs = 3;
       const currentCount = wizardState.referenceImages.length;
       const allowed = maxRefs - currentCount;
-      
+
       files.slice(0, allowed).forEach(file => {
         compressImage(file, (base64) => {
           wizardState.referenceImages.push(base64);
@@ -505,6 +550,7 @@ function initWizard() {
           </button>
         </div>
       `).join("");
+
 
       // Bind remove actions
       refPreviewsContainer.querySelectorAll(".btn-remove-item").forEach(btn => {
@@ -529,91 +575,80 @@ function initWizard() {
     });
   }
 
-  // Front/Back Body Map toggles
-  document.querySelectorAll(".map-view-toggle").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const view = btn.dataset.view;
-      wizardState.bodyView = view;
+  // Luxury Body Menu (Plan B)
+  const luxuryBodyMenu = document.getElementById("luxuryBodyMenu");
 
-      document.querySelectorAll(".map-view-toggle").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
+  function renderLuxuryMenu() {
+    if (!luxuryBodyMenu) return;
+    luxuryBodyMenu.innerHTML = "";
 
-      const imgFront = document.getElementById("imgFront");
-      const imgBack = document.getElementById("imgBack");
-      
-      if (view === "front") {
-        if (svgGroupFront) svgGroupFront.style.display = "block";
-        if (svgGroupBack) svgGroupBack.style.display = "none";
-        if (imgFront) imgFront.style.display = "block";
-        if (imgBack) imgBack.style.display = "none";
+    const zones = ["head", "torso", "back", "arms", "legs"];
+
+    zones.forEach(zone => {
+      const zoneName = zoneNamesRu[zone] || zone;
+      const subzones = subzonesData[zone] || [];
+
+      const zoneGroup = document.createElement("div");
+      zoneGroup.className = "luxury-zone-group";
+
+      const zoneBtn = document.createElement("button");
+      zoneBtn.type = "button";
+      zoneBtn.className = `luxury-zone-btn ${wizardState.bodyZone === zone ? "active" : ""}`;
+      zoneBtn.innerHTML = `<span>${zoneName}</span><svg class="chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>`;
+
+      const subzoneContainer = document.createElement("div");
+      subzoneContainer.className = "luxury-subzones-container";
+      if (wizardState.bodyZone === zone) {
+        subzoneContainer.style.display = "grid";
       } else {
-        if (svgGroupFront) svgGroupFront.style.display = "none";
-        if (svgGroupBack) svgGroupBack.style.display = "block";
-        if (imgFront) imgFront.style.display = "none";
-        if (imgBack) imgBack.style.display = "block";
+        subzoneContainer.style.display = "none";
       }
-      resetBodySilhouette();
-    });
-  });
 
-  // SVG interactions
-  document.querySelectorAll(".body-zone").forEach(zoneEl => {
-    zoneEl.addEventListener("click", () => {
-      const zone = zoneEl.dataset.zone;
-      wizardState.bodyZone = zone;
+      subzones.forEach(sz => {
+        const szBtn = document.createElement("button");
+        szBtn.type = "button";
+        szBtn.className = `luxury-subzone-btn ${wizardState.bodySubzone === sz ? "selected" : ""}`;
+        szBtn.textContent = sz;
+        szBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          wizardState.bodyZone = zone;
+          wizardState.bodySubzone = sz;
 
-      // Reset prior active zone paths
-      document.querySelectorAll(".body-zone").forEach(z => z.classList.remove("active-zone"));
-      
-      // Highlight paths of selected zone
-      const visibleSelector = wizardState.bodyView === "front" ? "#svgGroupFront" : "#svgGroupBack";
-      document.querySelectorAll(`${visibleSelector} [data-zone='${zone}']`).forEach(p => p.classList.add("active-zone"));
+          document.querySelectorAll(".luxury-subzone-btn").forEach(b => b.classList.remove("selected"));
+          szBtn.classList.add("selected");
 
-      // Zoom silhouette SVG
-      const zoomConfig = svgZoomStyles[zone] || { scale: 1, origin: "50% 50%" };
-      if (bodySilhouetteContainer) {
-        bodySilhouetteContainer.style.transformOrigin = zoomConfig.origin;
-        bodySilhouetteContainer.style.transform = `scale(${zoomConfig.scale})`;
-      }
-      // Add selection layout class
-      const container = document.querySelector(".body-map-container");
-      if (container) container.classList.add("zone-selected");
-
-      // Show subzones panel
-      if (selectedZoneName) selectedZoneName.textContent = zoneNamesRu[zone] || "Зона";
-      renderSubzones(zone);
-    });
-  });
-
-  if (btnBackToSilhouette) {
-    btnBackToSilhouette.addEventListener("click", resetBodySilhouette);
-  }
-
-  function renderSubzones(zone) {
-    if (!subzonesPanel || !subzonesList) return;
-    const subzones = subzonesData[zone] || [];
-    subzonesList.innerHTML = subzones.map(subzone => `
-      <button type="button" class="subzone-btn ${wizardState.bodySubzone === subzone ? "selected" : ""}" data-subzone="${subzone}">
-        ${subzone}
-      </button>
-    `).join("");
-
-    // Bind subzone clicks
-    subzonesList.querySelectorAll(".subzone-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const subzone = btn.dataset.subzone;
-        wizardState.bodySubzone = subzone;
-
-        subzonesList.querySelectorAll(".subzone-btn").forEach(b => b.classList.remove("selected"));
-        btn.classList.add("selected");
-
-        // Advance to next step after a tiny delay
-        setTimeout(() => {
-          nextStep(6);
-        }, 220);
+          setTimeout(() => nextStep(6), 300);
+        });
+        subzoneContainer.appendChild(szBtn);
       });
+
+      zoneBtn.addEventListener("click", () => {
+        // Toggle accordion
+        const isActive = wizardState.bodyZone === zone;
+
+        // Close all others
+        document.querySelectorAll(".luxury-zone-btn").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".luxury-subzones-container").forEach(c => c.style.display = "none");
+
+        if (!isActive) {
+          wizardState.bodyZone = zone;
+          wizardState.bodySubzone = null;
+          zoneBtn.classList.add("active");
+          subzoneContainer.style.display = "grid";
+        } else {
+          wizardState.bodyZone = null;
+          wizardState.bodySubzone = null;
+        }
+      });
+
+      zoneGroup.appendChild(zoneBtn);
+      zoneGroup.appendChild(subzoneContainer);
+      luxuryBodyMenu.appendChild(zoneGroup);
     });
   }
+
+  // Call it initially
+  renderLuxuryMenu();
 
   // Size preset cards
   document.querySelectorAll(".size-preset-card").forEach(card => {
@@ -633,55 +668,40 @@ function initWizard() {
       else if (preset === "XL") sizeCm = 30;
 
       wizardState.sizeCm = sizeCm;
-      if (sizeRangeInput) {
-        sizeRangeInput.value = sizeCm;
-      }
       if (sizeSliderVal) {
         sizeSliderVal.textContent = `${sizeCm} см`;
       }
 
       updateSizeVisualizer(sizeCm);
       if (sizeNextBtn) {
-        sizeNextBtn.removeAttribute("disabled");
+        const label = sizeNextBtn.querySelector("span");
+        if (label) label.textContent = "Продолжить";
       }
     });
   });
 
-  // Size Slider Input
-  if (sizeRangeInput) {
-    sizeRangeInput.addEventListener("input", (e) => {
-      const size = parseInt(e.target.value);
-      wizardState.sizeCm = size;
-      if (sizeSliderVal) {
-        sizeSliderVal.textContent = `${size} см`;
-      }
-
-      // Highlight closest preset
-      let activePreset = "M";
-      if (size <= 5) activePreset = "XS";
-      else if (size <= 10) activePreset = "S";
-      else if (size <= 15) activePreset = "M";
-      else if (size <= 22) activePreset = "L";
-      else activePreset = "XL";
-
-      wizardState.sizePreset = activePreset;
-      document.querySelectorAll(".size-preset-card").forEach(c => {
-        c.classList.toggle("selected", c.dataset.sizePreset === activePreset);
-      });
-
-      updateSizeVisualizer(size);
-      if (sizeNextBtn) {
-        sizeNextBtn.removeAttribute("disabled");
-      }
-    });
-  }
-
   function updateSizeVisualizer(cm) {
     const visualizerTattooBox = document.getElementById("visualizerTattooBox");
-    if (!visualizerTattooBox) return;
-    const sizePx = Math.max(12, Math.min(160, cm * 5.33));
-    visualizerTattooBox.style.width = `${sizePx}px`;
-    visualizerTattooBox.style.height = `${sizePx}px`;
+    const visualizerPhoneBox = document.getElementById("visualizerPhoneBox");
+    if (!visualizerTattooBox || !visualizerPhoneBox) return;
+    if (!cm) {
+      visualizerPhoneBox.style.width = "76px";
+      visualizerPhoneBox.style.height = "132px";
+      visualizerPhoneBox.querySelector("span").textContent = "15 см";
+      visualizerTattooBox.style.width = "44px";
+      visualizerTattooBox.style.height = "44px";
+      visualizerTattooBox.querySelector("span").textContent = "";
+      return;
+    }
+    const maxCm = Math.max(15, cm);
+    const maxPx = 132;
+    const phoneHeight = Math.round((15 / maxCm) * maxPx);
+    const tattooSize = Math.round((cm / maxCm) * maxPx);
+    visualizerPhoneBox.style.height = `${phoneHeight}px`;
+    visualizerPhoneBox.style.width = `${Math.round(phoneHeight * 0.58)}px`;
+    visualizerPhoneBox.querySelector("span").textContent = "15 см";
+    visualizerTattooBox.style.width = `${tattooSize}px`;
+    visualizerTattooBox.style.height = `${tattooSize}px`;
     visualizerTattooBox.querySelector("span").textContent = `${cm} см`;
   }
 
@@ -703,8 +723,8 @@ function initWizard() {
       experienceText += " (впервые у мастера)";
     }
 
-    const sketchText = wizardState.hasSketch 
-      ? `Да ${wizardState.sketchData ? "(эскиз загружен)" : ""}` 
+    const sketchText = wizardState.hasSketch
+      ? `Да ${wizardState.sketchData ? "(эскиз загружен)" : ""}`
       : "Нет, нужна разработка";
 
     const sideText = wizardState.bodyView === "front" ? "спереди" : "сзади";
@@ -712,9 +732,11 @@ function initWizard() {
     const subzoneText = wizardState.bodySubzone || "Не выбрано";
     const locationText = `${zoneNameText} — ${subzoneText} (${sideText})`;
 
-    const sizeText = `${wizardState.sizeCm} см (Пресет ${wizardState.sizePreset})`;
+    const sizeText = wizardState.sizeCm
+      ? `${wizardState.sizeCm} см (Пресет ${wizardState.sizePreset})`
+      : "Не выбран";
 
-    const ideaTextShort = wizardState.ideaText.trim() 
+    const ideaTextShort = wizardState.ideaText.trim()
       ? (wizardState.ideaText.length > 80 ? wizardState.ideaText.slice(0, 80) + "..." : wizardState.ideaText)
       : "Не указано";
 
@@ -747,7 +769,8 @@ function initWizard() {
   }
 
   function estimatePrice(zone, subzone, sizeCm, sizePreset) {
-    if (sizePreset === "XL" || sizeCm >= 25) {
+    if (!sizeCm) return "После консультации";
+    if (sizePreset === "XL" || sizeCm >= 30) {
       if (["Рукав", "Штанина", "Вся спина"].includes(subzone)) {
         return "от 35 000 ₽";
       }
@@ -762,27 +785,132 @@ function initWizard() {
 
   // Submit action
   if (wizardSubmitBtn) {
-    wizardSubmitBtn.addEventListener("click", () => {
+    wizardSubmitBtn.addEventListener("click", async () => {
+      if (!bookingConsent?.checked) {
+        showToast("Подтвердите согласие на отправку анкеты.");
+        return;
+      }
+
       const textReport = compileTextReport();
-      
-      // Copy report to clipboard
-      navigator.clipboard.writeText(textReport).then(() => {
-        showToast("Анкета скопирована! Открываем Telegram...");
-        
-        // Compute short Telegram deep link param
-        const code = getTelegramCode();
-        const tgLink = `https://t.me/blackcarp_bot?start=${code}`;
-        
+      const originalLabel = wizardSubmitBtn.querySelector("span")?.textContent || "Перейти в Telegram";
+      setSubmitState(true, "Отправляем анкету");
+
+      try {
+        const result = await submitBookingToApi();
+        await copyToClipboard(textReport);
+        showToast(result.masterNotified
+          ? "Анкета отправлена мастеру. Открываем Telegram..."
+          : "Анкета сохранена. Открываем Telegram..."
+        );
         setTimeout(() => {
-          window.open(tgLink, "_blank");
+          window.open(result.telegramUrl, "_blank");
+          setSubmitState(false, originalLabel);
+        }, 900);
+      } catch (err) {
+        console.error("Booking submit failed: ", err);
+        await copyToClipboard(textReport);
+        showToast("Не удалось отправить на сервер. Анкета скопирована.");
+        setTimeout(() => {
+          window.open(fallbackTelegramUrl(), "_blank");
+          setSubmitState(false, originalLabel);
         }, 1200);
-      }).catch(err => {
-        console.error("Clipboard copy failed: ", err);
-        // Fallback: just open link
-        const code = getTelegramCode();
-        window.open(`https://t.me/blackcarp_bot?start=${code}`, "_blank");
+      }
+    });
+  }
+
+  function setSubmitState(isSubmitting, label) {
+    if (!wizardSubmitBtn) return;
+    wizardSubmitBtn.disabled = isSubmitting;
+    const labelNode = wizardSubmitBtn.querySelector("span");
+    if (labelNode && label) labelNode.textContent = label;
+  }
+
+  async function submitBookingToApi() {
+    const response = await fetch(`${bookingApiBase}/api/booking/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildBookingPayload())
+    });
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.ok || !data.telegramUrl) {
+      throw new Error(data?.error || `booking_submit_${response.status}`);
+    }
+
+    localStorage.setItem("black_carp_last_booking", JSON.stringify({
+      requestId: data.requestId,
+      publicCode: data.publicCode,
+      telegramUrl: data.telegramUrl,
+      submittedAt: new Date().toISOString()
+    }));
+
+    return data;
+  }
+
+  function buildBookingPayload() {
+    const priceEstimate = estimatePrice(
+      wizardState.bodyZone,
+      wizardState.bodySubzone,
+      wizardState.sizeCm,
+      wizardState.sizePreset
+    );
+
+    return {
+      idempotencyKey: getIdempotencyKey(),
+      consentAt: new Date().toISOString(),
+      firstTattoo: wizardState.firstTattoo,
+      beenToMaster: wizardState.beenToMaster,
+      hasSketch: Boolean(wizardState.hasSketch),
+      sketchComment: wizardState.sketchComment || "",
+      bodyZone: zoneNamesRu[wizardState.bodyZone] || wizardState.bodyZone,
+      bodySubzone: wizardState.bodySubzone,
+      bodyView: wizardState.bodyView || "front",
+      sizePreset: wizardState.sizePreset,
+      sizeCm: wizardState.sizeCm,
+      ideaText: wizardState.ideaText || "",
+      priceEstimate,
+      attachments: buildBookingAttachments()
+    };
+  }
+
+  function buildBookingAttachments() {
+    const attachments = [];
+    if (wizardState.sketchData) {
+      attachments.push({
+        kind: "sketch",
+        dataUrl: wizardState.sketchData
+      });
+    }
+    wizardState.referenceImages.slice(0, 3).forEach((dataUrl) => {
+      attachments.push({
+        kind: "reference",
+        dataUrl
       });
     });
+    return attachments;
+  }
+
+  function getIdempotencyKey() {
+    const storageKey = "black_carp_booking_idempotency_key";
+    let key = localStorage.getItem(storageKey);
+    if (!key) {
+      key = `web_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem(storageKey, key);
+    }
+    return key;
+  }
+
+  async function copyToClipboard(text) {
+    if (!navigator.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (err) {
+      console.error("Clipboard copy failed: ", err);
+    }
+  }
+
+  function fallbackTelegramUrl() {
+    return `https://t.me/${bookingBotUsername}?start=${encodeURIComponent(getTelegramCode())}`;
   }
 
   function compileTextReport() {
@@ -790,18 +918,18 @@ function initWizard() {
     const beenToMasterText = wizardState.firstTattoo === "no"
       ? (wizardState.beenToMaster === "yes" ? "Да" : "Нет")
       : "Не применимо";
-    
+
     const sketchText = wizardState.hasSketch ? "Да" : "Нужна разработка";
     const sideText = wizardState.bodyView === "front" ? "Спереди" : "Сзади";
     const locationText = `${zoneNamesRu[wizardState.bodyZone] || "Не указана"} — ${wizardState.bodySubzone || "Не указана"} (${sideText})`;
-    
+
     return `BLACK CARP — АНКЕТА ЗАПИСИ
 ------------------------------
 • Первая татуировка: ${firstTattooText}
 • Был(а) у этого мастера: ${beenToMasterText}
 • Готовый эскиз: ${sketchText}
 • Зона нанесения: ${locationText}
-• Размер: ~${wizardState.sizeCm} см (Пресет ${wizardState.sizePreset || "M"})
+• Размер: ${wizardState.sizeCm ? `~${wizardState.sizeCm} см (Пресет ${wizardState.sizePreset})` : "Не выбран"}
 • Описание идеи: ${wizardState.ideaText || "Опишет в переписке"}`;
   }
 
@@ -814,7 +942,7 @@ function initWizard() {
       wizardState.bodyZone || "any",
       subTranslation,
       wizardState.bodyView === "front" ? "f" : "b",
-      wizardState.sizeCm || 15
+      wizardState.sizeCm || "na"
     ].join("_");
   }
 
@@ -830,8 +958,14 @@ function initWizard() {
     }, 2800);
   }
 
-  // Storage recovery
-  loadStateFromStorage();
+  try {
+    localStorage.removeItem("black_carp_booking_state");
+    localStorage.removeItem("black_carp_booking_history");
+  } catch (e) {
+    console.error("Local storage reset failed", e);
+  }
+  updateProgress(2);
+  renderLuxuryMenu();
 }
 
 function saveStateToStorage() {
@@ -840,7 +974,7 @@ function saveStateToStorage() {
     // Don't store large image files in local storage to prevent quota errors
     stateCopy.sketchData = null;
     stateCopy.referenceImages = [];
-    
+
     localStorage.setItem("black_carp_booking_state", JSON.stringify(stateCopy));
     localStorage.setItem("black_carp_booking_history", JSON.stringify(wizardHistory));
   } catch (e) {
@@ -855,15 +989,15 @@ function loadStateFromStorage() {
 
     if (savedState && savedHistory) {
       const parsedState = JSON.parse(savedState);
-      const parsedHistory = JSON.parse(savedHistory);
 
       // Restore values
       Object.assign(wizardState, parsedState);
-      wizardHistory = parsedHistory;
+      wizardState.sizeCm = Number(wizardState.sizeCm) || null;
+      wizardHistory = [2];
 
       // Restore UI indicators
-      const lastStep = wizardHistory[wizardHistory.length - 1];
-      
+      const lastStep = 2;
+
       // Update form textareas/options based on saved values
       if (wizardState.ideaText && tattooIdeaText) {
         tattooIdeaText.value = wizardState.ideaText;
@@ -872,11 +1006,10 @@ function loadStateFromStorage() {
         sketchComment.value = wizardState.sketchComment;
       }
       if (wizardState.sizeCm) {
-        if (sizeRangeInput) sizeRangeInput.value = wizardState.sizeCm;
         if (sizeSliderVal) sizeSliderVal.textContent = `${wizardState.sizeCm} см`;
         updateSizeVisualizer(wizardState.sizeCm);
       }
-      
+
       // Sync Front/Back buttons
       document.querySelectorAll(".map-view-toggle").forEach(btn => {
         btn.classList.toggle("active", btn.dataset.view === wizardState.bodyView);
@@ -891,14 +1024,13 @@ function loadStateFromStorage() {
 
       // Restore option selections in HTML
       restoreSelectionClasses();
-
       goToSlide(lastStep);
     } else {
-      updateProgress(1);
+      updateProgress(2);
     }
   } catch (e) {
     console.error("Local storage load failed", e);
-    updateProgress(1);
+    updateProgress(2);
   }
 }
 
@@ -927,26 +1059,68 @@ function restoreSelectionClasses() {
     document.querySelectorAll(".size-preset-card").forEach(c => {
       c.classList.toggle("selected", c.dataset.sizePreset === wizardState.sizePreset);
     });
-    if (sizeNextBtn) sizeNextBtn.removeAttribute("disabled");
+    if (sizeNextBtn) {
+      const label = sizeNextBtn.querySelector("span");
+      if (label) label.textContent = "Продолжить";
+    }
   }
 }
 
 function updateSizeVisualizer(cm) {
   const visualizerTattooBox = document.getElementById("visualizerTattooBox");
-  if (visualizerTattooBox) {
-    const sizePx = Math.max(12, Math.min(160, cm * 5.33));
-    visualizerTattooBox.style.width = `${sizePx}px`;
-    visualizerTattooBox.style.height = `${sizePx}px`;
+  const visualizerPhoneBox = document.getElementById("visualizerPhoneBox");
+  if (visualizerTattooBox && visualizerPhoneBox) {
+    if (!cm) {
+      visualizerPhoneBox.style.width = "76px";
+      visualizerPhoneBox.style.height = "132px";
+      visualizerPhoneBox.querySelector("span").textContent = "15 см";
+      visualizerTattooBox.style.width = "44px";
+      visualizerTattooBox.style.height = "44px";
+      visualizerTattooBox.querySelector("span").textContent = "";
+      return;
+    }
+    const maxCm = Math.max(15, cm);
+    const maxPx = 132;
+    const phoneHeight = Math.round((15 / maxCm) * maxPx);
+    const tattooSize = Math.round((cm / maxCm) * maxPx);
+    visualizerPhoneBox.style.height = `${phoneHeight}px`;
+    visualizerPhoneBox.style.width = `${Math.round(phoneHeight * 0.58)}px`;
+    visualizerPhoneBox.querySelector("span").textContent = "15 см";
+    visualizerTattooBox.style.width = `${tattooSize}px`;
+    visualizerTattooBox.style.height = `${tattooSize}px`;
     visualizerTattooBox.querySelector("span").textContent = `${cm} см`;
   }
+}
+
+function initLocationActions() {
+  document.querySelectorAll("[data-copy-address]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const address = button.dataset.copyAddress;
+      if (!address) return;
+
+      try {
+        await navigator.clipboard.writeText(address);
+        const originalText = button.textContent;
+        button.textContent = "Скопировано";
+        button.classList.add("is-copied");
+        window.setTimeout(() => {
+          button.textContent = originalText;
+          button.classList.remove("is-copied");
+        }, 1800);
+      } catch (error) {
+        console.error("Address copy failed", error);
+      }
+    });
+  });
 }
 
 // Initialize Wizard on DOM Load
 if (document.readyState === "loading") {
   window.addEventListener("DOMContentLoaded", () => {
     initWizard();
+    initLocationActions();
   });
 } else {
   initWizard();
+  initLocationActions();
 }
-

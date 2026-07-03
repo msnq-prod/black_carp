@@ -1,0 +1,1045 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Black Carp — Telegram-бот и заявка</title>
+  <style>
+    :root {
+      --bg: #070707;
+      --bg-2: #0d0d0c;
+      --ink: #eee6d6;
+      --muted: #a69d8f;
+      --soft: rgba(238, 230, 214, 0.68);
+      --line: rgba(238, 230, 214, 0.18);
+      --line-strong: rgba(238, 230, 214, 0.34);
+      --panel: rgba(238, 230, 214, 0.055);
+      --panel-2: rgba(238, 230, 214, 0.09);
+      --accent: #d8c9a6;
+      --ok: #91b59a;
+      --warn: #d0a56c;
+      --danger: #ba7770;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: "Iowan Old Style", "Cormorant Garamond", "Times New Roman", serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    body {
+      min-width: 320px;
+      min-height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 22% 12%, rgba(238, 230, 214, 0.08), transparent 28rem),
+        radial-gradient(circle at 80% 78%, rgba(216, 201, 166, 0.08), transparent 24rem),
+        linear-gradient(180deg, #090908 0%, #050505 100%);
+      color: var(--ink);
+      font-family: var(--sans);
+      letter-spacing: 0;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.12;
+      background-image:
+        linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+      background-size: 72px 72px;
+      mask-image: radial-gradient(circle at 50% 45%, #000, transparent 72%);
+    }
+
+    button,
+    a {
+      color: inherit;
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+      cursor: pointer;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    .deck {
+      position: relative;
+      width: 100vw;
+      height: 100svh;
+      overflow: hidden;
+    }
+
+    .slides {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      transform: translateX(calc(var(--slide, 0) * -100vw));
+      transition: transform 520ms cubic-bezier(.22, .8, .22, 1);
+    }
+
+    .slide {
+      position: relative;
+      flex: 0 0 100vw;
+      min-width: 100vw;
+      height: 100svh;
+      padding: 48px clamp(28px, 6vw, 76px) 84px;
+      overflow: hidden;
+    }
+
+    .slide-inner {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 34px;
+      width: min(1180px, 100%);
+      height: 100%;
+      margin: 0 auto;
+    }
+
+    .topline {
+      display: flex;
+      grid-column: 1 / -1;
+      align-items: center;
+      justify-content: space-between;
+      gap: 22px;
+      min-height: 32px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 620;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .topline::before {
+      content: "BLACK CARP";
+      color: var(--ink);
+    }
+
+    .topline span {
+      white-space: nowrap;
+    }
+
+    .hero-grid,
+    .two-col,
+    .three-col,
+    .flow-grid,
+    .phone-master-grid {
+      display: grid;
+      gap: 30px;
+      min-height: 0;
+    }
+
+    .hero-grid {
+      grid-template-columns: minmax(0, 1.04fr) minmax(310px, .78fr);
+      align-items: center;
+    }
+
+    .two-col {
+      grid-template-columns: minmax(0, .95fr) minmax(360px, 1.05fr);
+      align-items: center;
+    }
+
+    .three-col {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: stretch;
+    }
+
+    .flow-grid {
+      grid-template-columns: 1fr 1.1fr;
+      align-items: center;
+    }
+
+    .phone-master-grid {
+      grid-template-columns: minmax(260px, .58fr) minmax(0, 1fr);
+      align-items: center;
+    }
+
+    .title {
+      max-width: 820px;
+      font-family: var(--serif);
+      font-size: clamp(58px, 8vw, 118px);
+      font-weight: 420;
+      line-height: .9;
+      letter-spacing: 0;
+    }
+
+    .title.small {
+      font-size: clamp(46px, 6.5vw, 82px);
+      line-height: .94;
+    }
+
+    .lead {
+      max-width: 650px;
+      margin-top: 24px;
+      color: var(--soft);
+      font-size: clamp(18px, 2.1vw, 26px);
+      line-height: 1.42;
+    }
+
+    .section-title {
+      max-width: 820px;
+      font-family: var(--serif);
+      font-size: clamp(42px, 5.2vw, 78px);
+      font-weight: 420;
+      line-height: .98;
+    }
+
+    .text-stack {
+      display: grid;
+      gap: 18px;
+      align-content: center;
+    }
+
+    .text-stack p {
+      color: var(--soft);
+      font-size: clamp(17px, 1.55vw, 21px);
+      line-height: 1.52;
+    }
+
+    .media-frame {
+      position: relative;
+      overflow: hidden;
+      min-height: 520px;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      background: #050505;
+    }
+
+    .media-frame img {
+      width: 100%;
+      height: 100%;
+      min-height: inherit;
+      object-fit: cover;
+      filter: saturate(.72) contrast(1.1) brightness(.8);
+    }
+
+    .media-frame::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgba(0,0,0,.1), rgba(0,0,0,.58)),
+        radial-gradient(circle at 50% 25%, transparent, rgba(0,0,0,.35));
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      backdrop-filter: blur(18px);
+    }
+
+    .summary-panel {
+      display: grid;
+      gap: 18px;
+      padding: 28px;
+    }
+
+    .summary-panel h3,
+    .card h3 {
+      color: var(--ink);
+      font-family: var(--serif);
+      font-size: 30px;
+      font-weight: 420;
+      line-height: 1;
+    }
+
+    .summary-panel p,
+    .card p,
+    .flow-card p {
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    .stack-list {
+      display: grid;
+      gap: 10px;
+      margin: 8px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .stack-list li {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      color: var(--soft);
+      font-size: 15px;
+      line-height: 1.42;
+    }
+
+    .stack-list li::before {
+      content: "";
+      flex: 0 0 5px;
+      width: 5px;
+      height: 5px;
+      margin-top: 9px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .card {
+      display: grid;
+      align-content: start;
+      gap: 16px;
+      min-height: 300px;
+      padding: 26px;
+      border: 1px solid var(--line);
+      background: rgba(238, 230, 214, 0.046);
+    }
+
+    .card-num {
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 720;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    .flow {
+      display: grid;
+      gap: 12px;
+    }
+
+    .flow-card {
+      position: relative;
+      display: grid;
+      grid-template-columns: 50px 1fr;
+      gap: 16px;
+      align-items: center;
+      padding: 18px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .flow-card strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--ink);
+      font-size: 17px;
+      font-weight: 620;
+    }
+
+    .dot {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .architecture {
+      display: grid;
+      gap: 14px;
+    }
+
+    .arch-row {
+      display: grid;
+      grid-template-columns: 1fr 70px 1fr;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .arch-box {
+      min-height: 88px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .arch-box strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--ink);
+      font-size: 17px;
+    }
+
+    .arch-box span {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.42;
+    }
+
+    .arrow {
+      color: var(--line-strong);
+      font-size: 28px;
+      text-align: center;
+    }
+
+    .phone {
+      position: relative;
+      width: min(330px, 100%);
+      min-height: 620px;
+      margin: 0 auto;
+      padding: 18px;
+      border: 1px solid rgba(238,230,214,.24);
+      border-radius: 32px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.08), transparent 18%),
+        #090908;
+      box-shadow: 0 28px 80px rgba(0,0,0,.42);
+    }
+
+    .phone-screen {
+      height: 584px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: #050505;
+    }
+
+    .phone-hero {
+      position: relative;
+      height: 190px;
+      background-image: linear-gradient(180deg, rgba(0,0,0,.08), #050505), url("../assets/media/hero-forearm.png");
+      background-size: cover;
+      background-position: 50% 35%;
+    }
+
+    .phone-content {
+      display: grid;
+      gap: 14px;
+      padding: 18px;
+    }
+
+    .phone h3 {
+      font-family: var(--serif);
+      font-size: 28px;
+      font-weight: 420;
+      line-height: 1;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .field span {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .field strong {
+      color: var(--ink);
+      font-size: 15px;
+      font-weight: 560;
+    }
+
+    .cta {
+      display: flex;
+      justify-content: center;
+      margin-top: 4px;
+      padding: 14px 18px;
+      border: 1px solid var(--ink);
+      background: var(--ink);
+      color: #080808;
+      font-size: 13px;
+      font-weight: 720;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    .telegram-card {
+      display: grid;
+      gap: 14px;
+      max-width: 560px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      background: rgba(238, 230, 214, 0.065);
+    }
+
+    .telegram-card.master {
+      border-color: rgba(216, 201, 166, .3);
+      background: rgba(216, 201, 166, .075);
+    }
+
+    .tg-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .tg-title {
+      color: var(--ink);
+      font-size: 22px;
+      font-weight: 650;
+    }
+
+    .tg-lines {
+      display: grid;
+      gap: 8px;
+      color: var(--soft);
+      font-size: 15px;
+      line-height: 1.45;
+    }
+
+    .tg-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .tg-actions span {
+      padding: 9px 11px;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      font-size: 12px;
+      background: rgba(0,0,0,.2);
+    }
+
+    .table {
+      display: grid;
+      border: 1px solid var(--line);
+      background: rgba(238, 230, 214, 0.036);
+    }
+
+    .table-row {
+      display: grid;
+      grid-template-columns: .65fr 1fr 1.25fr;
+      min-height: 68px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .table-row:last-child {
+      border-bottom: 0;
+    }
+
+    .table-row > div {
+      display: grid;
+      align-content: center;
+      padding: 14px 18px;
+      border-right: 1px solid var(--line);
+      color: var(--soft);
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    .table-row > div:last-child {
+      border-right: 0;
+    }
+
+    .table-row.header > div {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .status {
+      min-height: 112px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .status strong {
+      display: block;
+      margin-bottom: 10px;
+      color: var(--ink);
+      font-size: 15px;
+    }
+
+    .status span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .controls {
+      position: fixed;
+      z-index: 10;
+      left: 50%;
+      bottom: 22px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      transform: translateX(-50%);
+      padding: 10px;
+      border: 1px solid var(--line);
+      background: rgba(7,7,7,.72);
+      backdrop-filter: blur(18px);
+    }
+
+    .control-btn {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 34px;
+      border: 1px solid var(--line);
+      background: rgba(238, 230, 214, 0.06);
+      color: var(--ink);
+    }
+
+    .counter {
+      min-width: 72px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .progress {
+      position: fixed;
+      z-index: 11;
+      left: 0;
+      bottom: 0;
+      width: calc((var(--slide-index, 1) / var(--slide-count, 10)) * 100%);
+      height: 3px;
+      background: var(--accent);
+      transition: width 320ms ease;
+    }
+
+    .print-hint {
+      position: fixed;
+      z-index: 10;
+      right: 24px;
+      bottom: 29px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 880px) {
+      body {
+        overflow: auto;
+      }
+
+      .deck,
+      .slides,
+      .slide {
+        height: auto;
+        min-height: 100svh;
+      }
+
+      .slides {
+        display: block;
+        transform: none !important;
+      }
+
+      .slide {
+        padding: 36px 20px 62px;
+      }
+
+      .slide + .slide {
+        border-top: 1px solid var(--line);
+      }
+
+      .hero-grid,
+      .two-col,
+      .three-col,
+      .flow-grid,
+      .phone-master-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .media-frame {
+        min-height: 340px;
+      }
+
+      .status-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .table-row {
+        grid-template-columns: 1fr;
+      }
+
+      .table-row > div {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .table-row > div:last-child {
+        border-bottom: 0;
+      }
+
+      .controls,
+      .print-hint,
+      .progress {
+        display: none;
+      }
+    }
+
+    @media print {
+      @page {
+        size: 16in 9in;
+        margin: 0;
+      }
+
+      html,
+      body {
+        width: 16in;
+        height: 9in;
+        overflow: visible;
+        background: #070707;
+      }
+
+      .deck,
+      .slides {
+        display: block;
+        width: 16in;
+        height: auto;
+        overflow: visible;
+        transform: none !important;
+      }
+
+      .slide {
+        width: 16in;
+        min-width: 16in;
+        height: 9in;
+        min-height: 9in;
+        page-break-after: always;
+        break-after: page;
+      }
+
+      .controls,
+      .print-hint,
+      .progress {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck" aria-label="Презентация Telegram-бота Black Carp">
+    <div class="slides" data-slides>
+      <section class="slide">
+        <div class="slide-inner hero-grid">
+          <header class="topline"><span>Telegram-заявка и бот</span></header>
+          <div>
+            <h1 class="title">Система записи Black Carp</h1>
+            <p class="lead">Клиент заполняет красивую анкету на сайте. Мастер сразу получает структурированную заявку в Telegram и готовится к диалогу до первого сообщения клиента.</p>
+          </div>
+          <div class="media-frame">
+            <img src="../assets/media/hero-forearm.png" alt="Black Carp tattoo">
+          </div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide-inner">
+          <header class="topline"><span>Главная идея</span></header>
+          <div class="three-col">
+            <article class="card">
+              <span class="card-num">01</span>
+              <h3>Анкета на сайте</h3>
+              <p>Не перегружаем Telegram-чат вопросами. Клиент проходит короткий визуальный сценарий в стиле Black Carp.</p>
+              <ul class="stack-list">
+                <li>опыт клиента;</li>
+                <li>эскиз или разработка;</li>
+                <li>зона тела;</li>
+                <li>размер и идея;</li>
+                <li>референсы.</li>
+              </ul>
+            </article>
+            <article class="card">
+              <span class="card-num">02</span>
+              <h3>Заявка мастеру</h3>
+              <p>После клика `Перейти в Telegram` сервер сохраняет заявку и сразу отправляет мастеру карточку.</p>
+              <ul class="stack-list">
+                <li>номер заявки;</li>
+                <li>ответы клиента;</li>
+                <li>оценка масштаба;</li>
+                <li>ссылки на вложения;</li>
+                <li>кнопки действий.</li>
+              </ul>
+            </article>
+            <article class="card">
+              <span class="card-num">03</span>
+              <h3>Диалог в Telegram</h3>
+              <p>Бот подтверждает получение анкеты, связывает клиента с заявкой и оставляет живое общение в привычном канале.</p>
+              <ul class="stack-list">
+                <li>подтверждение клиенту;</li>
+                <li>уточнения;</li>
+                <li>статусы;</li>
+                <li>назначение консультации.</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide-inner flow-grid">
+          <header class="topline"><span>Сценарий</span></header>
+          <div class="text-stack">
+            <h2 class="section-title">Мастер получает анкету до начала переписки.</h2>
+            <p>Для этого форма отправляется не через Telegram deep link, а сначала на наш сервер. Telegram открывается уже после успешного сохранения заявки.</p>
+          </div>
+          <div class="flow">
+            <div class="flow-card"><span class="dot">1</span><div><strong>Клиент заполняет форму</strong><p>Сайт собирает ответы и файлы.</p></div></div>
+            <div class="flow-card"><span class="dot">2</span><div><strong>Сервер сохраняет заявку</strong><p>PostgreSQL хранит данные, файлы лежат отдельно.</p></div></div>
+            <div class="flow-card"><span class="dot">3</span><div><strong>Мастер получает карточку</strong><p>Бот отправляет мастеру сообщение в Telegram.</p></div></div>
+            <div class="flow-card"><span class="dot">4</span><div><strong>Клиент открывает Telegram</strong><p>По коду бот связывает клиента с уже созданной заявкой.</p></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide-inner phone-master-grid">
+          <header class="topline"><span>Что видит клиент</span></header>
+          <div class="phone" aria-label="Экран клиента">
+            <div class="phone-screen">
+              <div class="phone-hero"></div>
+              <div class="phone-content">
+                <h3>Анкета заполнена</h3>
+                <div class="field"><span>Зона</span><strong>Руки · предплечье</strong></div>
+                <div class="field"><span>Размер</span><strong>M · около 15 см</strong></div>
+                <div class="field"><span>Идея</span><strong>Карп, тонкая графика, без плотного закраса</strong></div>
+                <div class="field"><span>Референсы</span><strong>2 изображения</strong></div>
+                <div class="cta">Перейти в Telegram</div>
+              </div>
+            </div>
+          </div>
+          <div class="text-stack">
+            <h2 class="section-title">Клиент не чувствует “опросник в боте”.</h2>
+            <p>Он проходит аккуратный визуальный сценарий на сайте, видит резюме заявки и понимает, что мастер уже получил контекст.</p>
+            <div class="telegram-card">
+              <div class="tg-header"><span>Telegram</span><span>после Start</span></div>
+              <div class="tg-title">Ваша анкета получена</div>
+              <div class="tg-lines">
+                <span>Мастер уже видит идею, зону, размер и референсы.</span>
+                <span>Здесь можно продолжить диалог и уточнить детали консультации.</span>
+              </div>
+              <div class="tg-actions"><span>Открыть анкету</span><span>Добавить сообщение</span><span>Добавить референс</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide-inner two-col">
+          <header class="topline"><span>Что видит мастер</span></header>
+          <div class="text-stack">
+            <h2 class="section-title">Не поток сообщений, а готовая карточка заявки.</h2>
+            <p>Мастер сразу видит суть проекта и может открыть вложения, взять заявку в работу, запросить уточнения или предложить консультацию.</p>
+          </div>
+          <div class="telegram-card master">
+            <div class="tg-header"><span>Новая заявка</span><span>#BC7H2K</span></div>
+            <div class="tg-title">Black Carp · консультация</div>
+            <div class="tg-lines">
+              <span><strong>Статус:</strong> анкета отправлена, клиент переходит в Telegram</span>
+              <span><strong>Опыт:</strong> первая татуировка</span>
+              <span><strong>Эскиз:</strong> нужна разработка</span>
+              <span><strong>Зона:</strong> руки / предплечье / спереди</span>
+              <span><strong>Размер:</strong> M, около 15 см</span>
+              <span><strong>Идея:</strong> японский карп, тонкие линии, без плотного закраса</span>
+              <span><strong>Референсы:</strong> 2 файла</span>
+            </div>
+            <div class="tg-actions"><span>Взять в работу</span><span>Уточнить</span><span>Назначить консультацию</span><span>Открыть файлы</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide-inner">
+          <header class="topline"><span>Свой сервер</span></header>
+          <div class="two-col">
+            <div class="text-stack">
+              <h2 class="section-title">Архитектура под VPS без лишней нагрузки.</h2>
+              <p>Раз сервер свой, делаем обычный надежный backend: Node.js API, webhook Telegram, PostgreSQL и хранение файлов на диске или S3-совместимом хранилище.</p>
+            </div>
+            <div class="architecture">
+              <div class="arch-row">
+                <div class="arch-box"><strong>Сайт</strong><span>HTML/CSS/JS, форма заявки</span></div>
+                <div class="arrow">→</div>
+                <div class="arch-box"><strong>Node.js API</strong><span>прием анкеты, валидация, загрузка файлов</span></div>
+              </div>
+              <div class="arch-row">
+                <div class="arch-box"><strong>PostgreSQL</strong><span>заявки, клиенты, статусы, заметки</span></div>
+                <div class="arrow">↔</div>
+                <div class="arch-box"><strong>Telegram Bot</strong><span>webhook, уведомления, кнопки мастера</span></div>
+              </div>
+              <div class="arch-row">
+                <div class="arch-box"><strong>Файлы</strong><span>локальный storage или S3/MinIO</span></div>
+                <div class="arrow">→</div>
+                <div class="arch-box"><strong>Мастер</strong><span>карточка заявки и управление статусами</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide-inner">
+          <header class="topline"><span>База данных</span></header>
+          <div class="two-col">
+            <div class="text-stack">
+              <h2 class="section-title">PostgreSQL как основа заявки.</h2>
+              <p>База хранит структуру и историю. Файлы не кладем в таблицы: в БД только ключи и метаданные.</p>
+            </div>
+            <div class="table">
+              <div class="table-row header"><div>Таблица</div><div>Что хранит</div><div>Зачем</div></div>
+              <div class="table-row"><div>clients</div><div>Telegram ID, username, имя</div><div>связь клиента с заявками</div></div>
+              <div class="table-row"><div>booking_requests</div><div>анкета, зона, размер, идея, статус</div><div>главная сущность системы</div></div>
+              <div class="table-row"><div>attachments</div><div>эскизы и референсы</div><div>быстрый доступ к файлам</div></div>
+              <div class="table-row"><div>status_history</div><div>изменения статусов</div><div>контроль процесса</div></div>
+              <div class="table-row"><div>master_notes</div><div>заметки мастера</div><div>внутренний контекст</div></div>
+              <div class="table-row"><div>consultations</div><div>предложенное время</div><div>ручное назначение консультации</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide-inner">
+          <header class="topline"><span>Статусы</span></header>
+          <div class="text-stack">
+            <h2 class="section-title">Понятный путь заявки.</h2>
+            <p>Статусы нужны не для сложной CRM, а чтобы мастер видел, что уже сделано и где клиент сейчас.</p>
+          </div>
+          <div class="status-grid">
+            <div class="status"><strong>submitted</strong><span>анкета сохранена, мастер уведомлен</span></div>
+            <div class="status"><strong>awaiting_client_start</strong><span>клиент еще не нажал Start в боте</span></div>
+            <div class="status"><strong>client_linked</strong><span>Telegram-профиль связан с заявкой</span></div>
+            <div class="status"><strong>in_review</strong><span>мастер смотрит заявку</span></div>
+            <div class="status"><strong>need_details</strong><span>нужны уточнения</span></div>
+            <div class="status"><strong>consultation_offered</strong><span>предложено время консультации</span></div>
+            <div class="status"><strong>consultation_scheduled</strong><span>консультация назначена</span></div>
+            <div class="status"><strong>closed</strong><span>заявка закрыта</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide-inner">
+          <header class="topline"><span>Требования</span></header>
+          <div class="three-col">
+            <article class="card">
+              <span class="card-num">Функции</span>
+              <h3>Что должно работать</h3>
+              <ul class="stack-list">
+                <li>отправка анкеты до открытия Telegram;</li>
+                <li>мгновенное уведомление мастера;</li>
+                <li>deep link с кодом заявки;</li>
+                <li>связь клиента после `/start`;</li>
+                <li>кнопки мастера и история статусов.</li>
+              </ul>
+            </article>
+            <article class="card">
+              <span class="card-num">Надежность</span>
+              <h3>Что важно технически</h3>
+              <ul class="stack-list">
+                <li>защита от дублей;</li>
+                <li>заявка не теряется при ошибке Telegram;</li>
+                <li>доступ мастера только по разрешенным ID;</li>
+                <li>файлы не в базе;</li>
+                <li>логирование без персональных данных.</li>
+              </ul>
+            </article>
+            <article class="card">
+              <span class="card-num">Сервер</span>
+              <h3>Как не грузить VPS</h3>
+              <ul class="stack-list">
+                <li>webhook вместо polling;</li>
+                <li>сжатие изображений на клиенте;</li>
+                <li>лимиты на размер файлов;</li>
+                <li>кэш статики через nginx;</li>
+                <li>очередь только при росте нагрузки.</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide-inner two-col">
+          <header class="topline"><span>Итог</span></header>
+          <div class="text-stack">
+            <h2 class="section-title">Это не “бот ради бота”.</h2>
+            <p>Бот становится рабочим мостом между премиальной анкетой на сайте и живым общением с мастером.</p>
+            <p>Клиенту удобно. Мастеру заранее понятно, с чем человек пришел. Заказчику можно объяснить ценность без технических деталей.</p>
+          </div>
+          <div class="summary-panel panel">
+            <h3>Что получаем</h3>
+            <ul class="stack-list">
+              <li>более дорогой пользовательский опыт;</li>
+              <li>меньше хаоса в переписке;</li>
+              <li>структурированные заявки;</li>
+              <li>понятные статусы;</li>
+              <li>готовая база для будущей мини-CRM.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="controls" aria-label="Навигация по презентации">
+      <button class="control-btn" type="button" data-prev aria-label="Предыдущий слайд">‹</button>
+      <div class="counter" data-counter>1 / 10</div>
+      <button class="control-btn" type="button" data-next aria-label="Следующий слайд">›</button>
+    </div>
+    <div class="print-hint">← → навигация · Cmd/Ctrl+P для PDF</div>
+    <div class="progress" aria-hidden="true"></div>
+  </main>
+
+  <script>
+    const root = document.documentElement;
+    const slides = [...document.querySelectorAll(".slide")];
+    const counter = document.querySelector("[data-counter]");
+    let index = 0;
+
+    root.style.setProperty("--slide-count", slides.length);
+
+    function updateSlide(nextIndex) {
+      index = Math.max(0, Math.min(slides.length - 1, nextIndex));
+      root.style.setProperty("--slide", index);
+      root.style.setProperty("--slide-index", index + 1);
+      if (counter) counter.textContent = `${index + 1} / ${slides.length}`;
+    }
+
+    document.querySelector("[data-prev]").addEventListener("click", () => updateSlide(index - 1));
+    document.querySelector("[data-next]").addEventListener("click", () => updateSlide(index + 1));
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") {
+        event.preventDefault();
+        updateSlide(index + 1);
+      }
+      if (event.key === "ArrowLeft" || event.key === "PageUp") {
+        event.preventDefault();
+        updateSlide(index - 1);
+      }
+      if (event.key === "Home") updateSlide(0);
+      if (event.key === "End") updateSlide(slides.length - 1);
+    });
+
+    updateSlide(0);
+  </script>
+</body>
+</html>

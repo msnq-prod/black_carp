@@ -1,0 +1,535 @@
+/* Premium Visual Editor Styles */
+
+:root {
+  --editor-bg: #121212;
+  --editor-surface: #1e1e1e;
+  --editor-surface-hover: #2a2a2a;
+  --editor-border: rgba(255, 255, 255, 0.1);
+  --editor-border-focus: rgba(255, 255, 255, 0.3);
+  --editor-primary: #ffffff;
+  --editor-primary-hover: #f0f0f0;
+  --editor-text: #e0e0e0;
+  --editor-text-muted: #888888;
+  --editor-danger: #ff4d4d;
+  --editor-danger-hover: #ff3333;
+  --editor-active-outline: #52a8ff;
+}
+
+/* Adjust page layout to make space for sidebar */
+body.editor-active {
+  padding-right: 320px !important;
+  box-sizing: border-box;
+}
+
+/* Main Toolbar (Top Bar) */
+.editor-toolbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: rgba(18, 18, 18, 0.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--editor-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 24px;
+  z-index: 999990;
+  font-family: system-ui, -apple-system, sans-serif;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.editor-toolbar-logo {
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.editor-toolbar-actions {
+  display: flex;
+  gap: 12px;
+}
+
+/* Base Buttons */
+.editor-btn {
+  background: transparent;
+  border: 1px solid var(--editor-border);
+  color: var(--editor-text);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editor-btn:hover {
+  background: var(--editor-surface-hover);
+  border-color: var(--editor-border-focus);
+}
+
+.editor-btn-primary {
+  background: var(--editor-primary);
+  color: #000;
+  border: none;
+}
+
+.editor-btn-primary:hover {
+  background: var(--editor-primary-hover);
+  transform: translateY(-1px);
+}
+
+.editor-btn-danger {
+  border-color: rgba(255, 77, 77, 0.3);
+  color: var(--editor-danger);
+}
+
+.editor-btn-danger:hover {
+  background: rgba(255, 77, 77, 0.1);
+  border-color: var(--editor-danger);
+}
+
+/* Sidebar Inspector */
+.editor-inspector {
+  position: fixed;
+  top: 60px;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  background: var(--editor-surface);
+  border-left: 1px solid var(--editor-border);
+  z-index: 999980;
+  font-family: system-ui, -apple-system, sans-serif;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -5px 0 25px rgba(0, 0, 0, 0.5);
+  color: var(--editor-text);
+  overflow-y: auto;
+}
+
+.editor-inspector-header {
+  padding: 20px;
+  border-bottom: 1px solid var(--editor-border);
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.editor-inspector-content {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+}
+
+.editor-inspector-empty {
+  color: var(--editor-text-muted);
+  text-align: center;
+  padding: 40px 20px;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.editor-inspector-empty svg {
+  width: 48px;
+  height: 48px;
+  opacity: 0.3;
+}
+
+/* Accordions for Inspector Sections */
+.editor-accordion {
+  border-bottom: 1px solid var(--editor-border);
+}
+
+.editor-accordion-header {
+  padding: 14px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
+  transition: background-color 0.2s;
+}
+
+.editor-accordion-header:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.editor-accordion-header::after {
+  content: '▼';
+  font-size: 10px;
+  color: var(--editor-text-muted);
+  transition: transform 0.2s;
+}
+
+.editor-accordion.active .editor-accordion-header::after {
+  transform: rotate(180deg);
+}
+
+.editor-accordion-content {
+  display: none;
+  padding: 20px;
+  flex-direction: column;
+  gap: 16px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.editor-accordion.active .editor-accordion-content {
+  display: flex;
+}
+
+/* Form Controls */
+.editor-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.editor-field-group label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--editor-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.editor-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.editor-field-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.editor-input, .editor-select {
+  background: var(--editor-bg);
+  border: 1px solid var(--editor-border);
+  color: var(--editor-text);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+}
+
+.editor-input:focus, .editor-select:focus {
+  border-color: var(--editor-border-focus);
+}
+
+/* Sliders */
+.editor-slider-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.editor-slider-container input[type="range"] {
+  flex-grow: 1;
+  accent-color: #fff;
+  height: 4px;
+  background: var(--editor-bg);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.editor-slider-val {
+  font-size: 12px;
+  color: var(--editor-text-muted);
+  width: 45px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Preset Options (Alignment, grid layout) */
+.editor-button-group {
+  display: flex;
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.editor-button-group button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--editor-text);
+  padding: 8px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: background-color 0.2s;
+  border-right: 1px solid var(--editor-border);
+}
+
+.editor-button-group button:last-child {
+  border-right: none;
+}
+
+.editor-button-group button.active {
+  background: var(--editor-primary);
+  color: #000;
+  font-weight: 600;
+}
+
+/* Color Picker Container */
+.editor-color-picker-container {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.editor-color-picker-input {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+  padding: 0;
+}
+
+/* Selected Element Border Overlay */
+.editor-selected-element {
+  outline: 2px dashed var(--editor-active-outline) !important;
+  outline-offset: 3px;
+  position: relative;
+}
+
+/* Editable Text State */
+.editor-editable-text {
+  outline: none;
+}
+
+.editor-editable-text:hover {
+  outline: 1px dashed rgba(82, 168, 255, 0.5);
+}
+
+/* Block Hover Outline & Toolbar */
+.editor-block {
+  position: relative;
+  transition: outline 0.2s;
+}
+
+.editor-block:hover {
+  outline: 1px solid rgba(82, 168, 255, 0.4);
+}
+
+.editor-block-controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 1000;
+  opacity: 0;
+  transition: opacity 0.2s;
+  background: rgba(18, 18, 18, 0.9);
+  backdrop-filter: blur(5px);
+  padding: 4px;
+  border-radius: 6px;
+  border: 1px solid var(--editor-border);
+}
+
+.editor-block:hover .editor-block-controls {
+  opacity: 1;
+}
+
+.editor-block-btn {
+  background: transparent;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.editor-block-btn:hover {
+  background: var(--editor-surface-hover);
+}
+
+/* Block Separators ("Add Block" buttons) */
+.editor-add-block-separator {
+  position: relative;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: -12px 0;
+  z-index: 500;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.editor-add-block-separator:hover {
+  opacity: 1;
+}
+
+.editor-add-block-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--editor-active-outline);
+}
+
+.editor-add-block-btn {
+  position: relative;
+  background: var(--editor-active-outline);
+  color: #fff;
+  border: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: bold;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+  transition: transform 0.2s;
+}
+
+.editor-add-block-btn:hover {
+  transform: scale(1.1);
+}
+
+/* Modals (Block Presets Library) */
+.editor-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  z-index: 1000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: system-ui, sans-serif;
+}
+
+.editor-modal {
+  background: var(--editor-surface);
+  border: 1px solid var(--editor-border);
+  border-radius: 12px;
+  width: 500px;
+  max-width: 90%;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 15px 50px rgba(0, 0, 0, 0.8);
+}
+
+.editor-modal-header {
+  padding: 20px;
+  border-bottom: 1px solid var(--editor-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.editor-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.editor-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--editor-text-muted);
+  cursor: pointer;
+  font-size: 20px;
+}
+
+.editor-modal-content {
+  padding: 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.editor-preset-card {
+  background: var(--editor-bg);
+  border: 1px solid var(--editor-border);
+  border-radius: 8px;
+  padding: 15px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--editor-text);
+  text-align: left;
+}
+
+.editor-preset-card:hover {
+  border-color: var(--editor-border-focus);
+  transform: translateY(-2px);
+}
+
+.editor-preset-card-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.editor-preset-card-desc {
+  font-size: 12px;
+  color: var(--editor-text-muted);
+}
+
+/* Toast */
+.editor-toast {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  background: #333;
+  color: #fff;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  transform: translateY(-100px);
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  z-index: 9999999;
+  box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
+
+.editor-toast.show {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+/* Shift normal site content to avoid overlapping header and sidebar */
+body.editor-active .app-shell {
+  margin-top: 60px;
+}
