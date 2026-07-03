@@ -2,6 +2,7 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const https = require("https");
 const { DatabaseSync } = require("node:sqlite");
 
 const app = express();
@@ -369,32 +370,22 @@ async function notifyMasterText(text, replyMarkup) {
 async function sendTelegramMessage(chatId, text, replyMarkup) {
   if (!process.env.BOT_TOKEN) return { ok: false, error: "bot_not_configured" };
 
-  const response = await fetch(`${telegramApiBase()}/bot${process.env.BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+  try {
+    const data = await telegramRequest("sendMessage", {
       chat_id: chatId,
       text,
       reply_markup: replyMarkup || undefined,
       disable_web_page_preview: true
-    })
-  });
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || data.ok === false) {
-    return { ok: false, error: data.description || `telegram_${response.status}` };
+    });
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
   }
-
-  return { ok: true, data };
 }
 
 async function answerCallback(callbackQueryId, text) {
   if (!process.env.BOT_TOKEN || !callbackQueryId) return;
-  await fetch(`${telegramApiBase()}/bot${process.env.BOT_TOKEN}/answerCallbackQuery`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ callback_query_id: callbackQueryId, text })
-  });
+  await telegramRequest("answerCallbackQuery", { callback_query_id: callbackQueryId, text });
 }
 
 function upsertClient(user, chatId, now) {
@@ -608,6 +599,72 @@ function siteUrl() {
 
 function telegramApiBase() {
   return String(process.env.TELEGRAM_API_BASE || "https://api.telegram.org").replace(/\/$/, "");
+}
+
+async function telegramRequest(method, payload) {
+  const body = JSON.stringify(payload);
+  const apiIp = String(process.env.TELEGRAM_API_IP || "").trim();
+
+  if (apiIp) {
+    return telegramRequestViaIp(method, body, apiIp);
+  }
+
+  const response = await fetch(`${telegramApiBase()}/bot${process.env.BOT_TOKEN}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.description || `telegram_${response.status}`);
+  }
+  return data;
+}
+
+function telegramRequestViaIp(method, body, apiIp) {
+  return new Promise((resolve, reject) => {
+    const request = https.request({
+      host: apiIp,
+      servername: "api.telegram.org",
+      method: "POST",
+      path: `/bot${process.env.BOT_TOKEN}/${method}`,
+      headers: {
+        "Host": "api.telegram.org",
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body)
+      },
+      timeout: Number(process.env.TELEGRAM_TIMEOUT_MS || 15000)
+    }, (response) => {
+      let responseBody = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        responseBody += chunk;
+      });
+      response.on("end", () => {
+        const data = parseJson(responseBody);
+        if (response.statusCode < 200 || response.statusCode >= 300 || data.ok === false) {
+          reject(new Error(data.description || `telegram_${response.statusCode}`));
+          return;
+        }
+        resolve(data);
+      });
+    });
+
+    request.on("timeout", () => {
+      request.destroy(new Error("telegram_timeout"));
+    });
+    request.on("error", reject);
+    request.write(body);
+    request.end();
+  });
+}
+
+function parseJson(value) {
+  try {
+    return JSON.parse(value || "{}");
+  } catch {
+    return {};
+  }
 }
 
 function masterIds() {
