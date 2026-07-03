@@ -198,6 +198,9 @@
         </div>
       </article>
     </div>
+        <button type="button" class="works-top-button" id="worksTopButton" aria-label="Наверх">
+          ↑
+        </button>
       </section>
 
       <section class="view view-booking" data-view="booking" aria-label="Запись">
@@ -207,7 +210,13 @@
               <div class="wizard-progress-bar" id="wizardProgress" style="width: 14%;"></div>
             </div>
             <div class="wizard-top-nav">
-              <span class="wizard-step-indicator" id="wizardStepIndicator">Вопрос 1</span>
+              <button type="button" class="wizard-btn-back" id="wizardBackBtn" aria-label="Назад">
+                <svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"></path></svg>
+              </button>
+              <div class="wizard-nav-meta">
+                <span class="wizard-step-indicator" id="wizardStepIndicator">Вопрос 1</span>
+                <div class="wizard-step-dots" id="wizardStepDots"><div class="wizard-dot active"></div><div class="wizard-dot "></div><div class="wizard-dot "></div><div class="wizard-dot "></div><div class="wizard-dot "></div><div class="wizard-dot "></div></div>
+              </div>
             </div>
           </div>
 
@@ -232,7 +241,7 @@
             <!-- Шаг 3: Были ли у этого мастера -->
             <div class="wizard-slide" data-step="3">
               <div class="wizard-slide-content">
-                <h3 class="wizard-question-title">Вы уже были на сеансе у Black Carp?</h3>
+                <h3 class="wizard-question-title">Вы уже были у меня на сеансе?</h3>
                 <div class="wizard-options">
                   <button type="button" class="option-card" data-value="yes" data-next="4">
                     <span class="option-title">Да, мы знакомы</span>
@@ -310,23 +319,23 @@
                 <div class="size-presets">
                   <button type="button" class="size-preset-card" data-size-preset="XS" data-size-desc="xs 5x5">
                     <span class="preset-badge">xs</span>
-                    <span class="preset-size">5x5</span>
+                    <span class="preset-size">5x5 см</span>
                   </button>
                   <button type="button" class="size-preset-card" data-size-preset="S" data-size-desc="s 10x10">
                     <span class="preset-badge">s</span>
-                    <span class="preset-size">10x10</span>
+                    <span class="preset-size">10x10 см</span>
                   </button>
                   <button type="button" class="size-preset-card" data-size-preset="M" data-size-desc="m 15x15">
                     <span class="preset-badge">m</span>
-                    <span class="preset-size">15x15</span>
+                    <span class="preset-size">15x15 см</span>
                   </button>
                   <button type="button" class="size-preset-card" data-size-preset="L" data-size-desc="l 20x20">
                     <span class="preset-badge">l</span>
-                    <span class="preset-size">20x20</span>
+                    <span class="preset-size">20x20 см</span>
                   </button>
                   <button type="button" class="size-preset-card" data-size-preset="XL" data-size-desc="xl 30x30">
                     <span class="preset-badge">xl</span>
-                    <span class="preset-size">30x30</span>
+                    <span class="preset-size">30x30 см</span>
                   </button>
                 </div>
 
@@ -412,15 +421,6 @@
               </div>
             </div>
 
-          </div>
-
-          <!-- Wizard Navigation (Footer) -->
-          <div class="wizard-footer" id="wizardFooter">
-            <button type="button" class="wizard-btn-back" id="wizardBackBtn" aria-label="Назад">
-              <svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"></path></svg>
-              <span>Назад</span>
-            </button>
-            <div class="wizard-step-dots" id="wizardStepDots"><div class="wizard-dot active"></div><div class="wizard-dot "></div><div class="wizard-dot "></div><div class="wizard-dot "></div><div class="wizard-dot "></div><div class="wizard-dot "></div></div>
           </div>
         </div>
 

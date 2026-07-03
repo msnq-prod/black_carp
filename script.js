@@ -3,6 +3,7 @@ const navButtons = [...document.querySelectorAll("[data-nav]")];
 const openButtons = [...document.querySelectorAll("[data-open-view]")];
 const app = document.querySelector("#app");
 const worksFeed = document.querySelector("#worksFeed");
+const worksTopButton = document.querySelector("#worksTopButton");
 const routeModal = document.querySelector("[data-route-modal]");
 const routeOpenButtons = [...document.querySelectorAll("[data-open-route-gallery]")];
 const routeCloseButtons = [...document.querySelectorAll("[data-route-close]")];
@@ -122,6 +123,12 @@ openButtons.forEach((button) => {
   button.addEventListener("click", () => setView(button.dataset.openView));
 });
 
+if (worksTopButton && worksFeed) {
+  worksTopButton.addEventListener("click", () => {
+    worksFeed.scrollTo({ top: 0, behavior: "smooth" });
+  });
+}
+
 function openRouteModal() {
   if (!routeModal) return;
   routeModal.hidden = false;
@@ -163,6 +170,7 @@ const wizardState = {
   sketchComment: "",
   bodyZone: null,
   bodySubzone: null,
+  bodySubzoneCustom: "",
   bodyView: "front",
   sizePreset: null,
   sizeCm: null,
@@ -173,11 +181,11 @@ const wizardState = {
 let wizardHistory = [2];
 
 const subzonesData = {
-  head: ["Шея", "За ухом", "Голова"],
+  head: ["Шея", "За ухом", "Голова", "Лицо"],
   torso: ["Грудь", "Ключицы", "Ребра", "Живот"],
   back: ["Лопатки", "Поясница", "Вдоль позвоночника", "Вся спина"],
   arms: ["Плечо", "Предплечье", "Бицепс", "Кисть", "Рукав"],
-  legs: ["Бедро", "Икра / Голень", "Колено", "Лодыжка", "Штанина"]
+  legs: ["Бедро", "Икра / Голень", "Ступня", "Лодыжка"]
 };
 
 const zoneNamesRu = {
@@ -185,15 +193,16 @@ const zoneNamesRu = {
   torso: "Грудь и Живот",
   back: "Спина",
   arms: "Руки",
-  legs: "Ноги"
+  legs: "Ноги",
+  other: "Другое"
 };
 
 const subzoneTranslations = {
-  "Шея": "neck", "За ухом": "behindear", "Голова": "head",
+  "Шея": "neck", "За ухом": "behindear", "Голова": "head", "Лицо": "face",
   "Грудь": "chest", "Ключицы": "collarbone", "Ребра": "ribs", "Живот": "stomach",
   "Лопатки": "shoulderblades", "Поясница": "lowerback", "Вдоль позвоночника": "spine", "Вся спина": "fullback",
   "Плечо": "shoulder", "Предплечье": "forearm", "Бицепс": "biceps", "Кисть": "wrist", "Рукав": "sleeve",
-  "Бедро": "thigh", "Икра / Голень": "calfshin", "Колено": "knee", "Лодыжка": "ankle", "Штанина": "leg"
+  "Бедро": "thigh", "Икра / Голень": "calfshin", "Ступня": "foot", "Лодыжка": "ankle", "Другое": "other"
 };
 
 const svgZoomStyles = {
@@ -354,6 +363,7 @@ function resetWizard() {
   wizardState.sketchComment = "";
   wizardState.bodyZone = null;
   wizardState.bodySubzone = null;
+  wizardState.bodySubzoneCustom = "";
   wizardState.bodyView = "front";
   wizardState.sizePreset = null;
   wizardState.sizeCm = null;
@@ -582,7 +592,7 @@ function initWizard() {
     if (!luxuryBodyMenu) return;
     luxuryBodyMenu.innerHTML = "";
 
-    const zones = ["head", "torso", "back", "arms", "legs"];
+    const zones = ["head", "torso", "back", "arms", "legs", "other"];
 
     zones.forEach(zone => {
       const zoneName = zoneNamesRu[zone] || zone;
@@ -613,6 +623,7 @@ function initWizard() {
           e.stopPropagation();
           wizardState.bodyZone = zone;
           wizardState.bodySubzone = sz;
+          wizardState.bodySubzoneCustom = "";
 
           document.querySelectorAll(".luxury-subzone-btn").forEach(b => b.classList.remove("selected"));
           szBtn.classList.add("selected");
@@ -621,6 +632,49 @@ function initWizard() {
         });
         subzoneContainer.appendChild(szBtn);
       });
+
+      if (zone === "other") {
+        const customWrap = document.createElement("div");
+        customWrap.className = "luxury-subzone-custom visible";
+
+        const customInput = document.createElement("input");
+        customInput.type = "text";
+        customInput.id = "luxurySubzoneCustomInput";
+        customInput.className = "luxury-subzone-custom-input";
+        customInput.placeholder = "свой вариант";
+        customInput.value = wizardState.bodySubzoneCustom || "";
+        customInput.maxLength = 80;
+
+        customInput.addEventListener("click", (e) => e.stopPropagation());
+        customInput.addEventListener("focus", () => {
+          wizardState.bodyZone = "other";
+          wizardState.bodySubzone = "Другое";
+          zoneBtn.classList.add("active");
+          subzoneContainer.style.display = "grid";
+        });
+        customInput.addEventListener("input", () => {
+          wizardState.bodyZone = "other";
+          wizardState.bodySubzone = "Другое";
+          wizardState.bodySubzoneCustom = customInput.value.trim();
+        });
+        customInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            const value = customInput.value.trim();
+            if (!value) return;
+            wizardState.bodyZone = "other";
+            wizardState.bodySubzone = "Другое";
+            wizardState.bodySubzoneCustom = value;
+            nextStep(6);
+          }
+        });
+        customInput.addEventListener("blur", () => {
+          wizardState.bodySubzoneCustom = customInput.value.trim();
+        });
+
+        customWrap.appendChild(customInput);
+        subzoneContainer.appendChild(customWrap);
+      }
 
       zoneBtn.addEventListener("click", () => {
         // Toggle accordion
@@ -633,6 +687,7 @@ function initWizard() {
         if (!isActive) {
           wizardState.bodyZone = zone;
           wizardState.bodySubzone = null;
+          wizardState.bodySubzoneCustom = "";
           zoneBtn.classList.add("active");
           subzoneContainer.style.display = "grid";
         } else {
@@ -645,6 +700,13 @@ function initWizard() {
       zoneGroup.appendChild(subzoneContainer);
       luxuryBodyMenu.appendChild(zoneGroup);
     });
+  }
+
+  function getBodySubzoneLabel() {
+    if (wizardState.bodySubzone === "Другое" && wizardState.bodySubzoneCustom) {
+      return wizardState.bodySubzoneCustom;
+    }
+    return wizardState.bodySubzone || "";
   }
 
   // Call it initially
@@ -729,7 +791,7 @@ function initWizard() {
 
     const sideText = wizardState.bodyView === "front" ? "спереди" : "сзади";
     const zoneNameText = zoneNamesRu[wizardState.bodyZone] || "Любая";
-    const subzoneText = wizardState.bodySubzone || "Не выбрано";
+    const subzoneText = getBodySubzoneLabel() || "Не выбрано";
     const locationText = `${zoneNameText} — ${subzoneText} (${sideText})`;
 
     const sizeText = wizardState.sizeCm
@@ -863,7 +925,7 @@ function initWizard() {
       hasSketch: Boolean(wizardState.hasSketch),
       sketchComment: wizardState.sketchComment || "",
       bodyZone: zoneNamesRu[wizardState.bodyZone] || wizardState.bodyZone,
-      bodySubzone: wizardState.bodySubzone,
+      bodySubzone: getBodySubzoneLabel(),
       bodyView: wizardState.bodyView || "front",
       sizePreset: wizardState.sizePreset,
       sizeCm: wizardState.sizeCm,
@@ -921,7 +983,7 @@ function initWizard() {
 
     const sketchText = wizardState.hasSketch ? "Да" : "Нужна разработка";
     const sideText = wizardState.bodyView === "front" ? "Спереди" : "Сзади";
-    const locationText = `${zoneNamesRu[wizardState.bodyZone] || "Не указана"} — ${wizardState.bodySubzone || "Не указана"} (${sideText})`;
+    const locationText = `${zoneNamesRu[wizardState.bodyZone] || "Не указана"} — ${getBodySubzoneLabel() || "Не указана"} (${sideText})`;
 
     return `BLACK CARP — АНКЕТА ЗАПИСИ
 ------------------------------
