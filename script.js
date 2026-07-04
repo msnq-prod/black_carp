@@ -245,16 +245,15 @@ function getPresetSizeCm(preset) {
 }
 
 function getSizeVisualizerMetrics(cm) {
-  const {
-    phoneBaseHeight,
-    phoneBaseWidth,
-    phoneMinHeight,
-    phoneBaseFontSize,
-    phoneMinFontSize,
-    tattooMinSize,
-    tattooMatchSize,
-    tattooMaxSize
-  } = sizeVisualizerConfig;
+  const isCompactViewport = window.innerHeight <= 760;
+  const phoneBaseHeight = isCompactViewport ? 96 : sizeVisualizerConfig.phoneBaseHeight;
+  const phoneBaseWidth = sizeVisualizerConfig.phoneBaseWidth;
+  const phoneMinHeight = isCompactViewport ? 58 : sizeVisualizerConfig.phoneMinHeight;
+  const phoneBaseFontSize = isCompactViewport ? 12 : sizeVisualizerConfig.phoneBaseFontSize;
+  const phoneMinFontSize = isCompactViewport ? 9.5 : sizeVisualizerConfig.phoneMinFontSize;
+  const tattooMinSize = isCompactViewport ? 34 : sizeVisualizerConfig.tattooMinSize;
+  const tattooMatchSize = isCompactViewport ? 86 : sizeVisualizerConfig.tattooMatchSize;
+  const tattooMaxSize = isCompactViewport ? 104 : sizeVisualizerConfig.tattooMaxSize;
 
   if (!cm) {
     return {

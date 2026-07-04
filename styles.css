@@ -83,8 +83,8 @@ img {
 }
 
 .view-booking {
-  height: 100svh;
-  overflow: hidden;
+  min-height: 100svh;
+  overflow: visible;
 }
 
 .view.is-active {
@@ -936,10 +936,10 @@ p {
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  padding: max(18px, env(safe-area-inset-top)) 20px calc(var(--nav-h) + 18px);
+  padding: max(18px, env(safe-area-inset-top)) 20px calc(var(--nav-h) + env(safe-area-inset-bottom) + 32px);
   background: var(--bg);
   position: relative;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .wizard-header {
@@ -1589,6 +1589,55 @@ p {
 .wizard-slide[data-step="6"] .line-cta {
   min-height: 50px;
   margin-top: 10px;
+}
+
+@media (max-height: 760px) {
+  .wizard-header {
+    margin-bottom: 18px;
+  }
+
+  .wizard-slide-content {
+    padding-top: 8px;
+  }
+
+  .wizard-slide[data-step="6"] .wizard-question-title {
+    margin-bottom: 12px;
+  }
+
+  .size-presets {
+    gap: 5px;
+    margin-bottom: 8px;
+  }
+
+  .size-preset-card {
+    min-height: 48px;
+  }
+
+  .preset-badge {
+    font-size: 82px;
+  }
+
+  .preset-size {
+    font-size: 20px;
+  }
+
+  .size-comparison {
+    padding-top: 4px;
+    margin-bottom: 6px;
+  }
+
+  .size-visualizer {
+    min-height: 116px;
+    padding: 8px;
+  }
+
+  .visualizer-container {
+    min-height: 100px;
+  }
+
+  .wizard-slide[data-step="6"] .line-cta {
+    margin-top: 6px;
+  }
 }
 
 /* Step 7 Previews */
