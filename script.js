@@ -213,6 +213,82 @@ const svgZoomStyles = {
   legs: { scale: 1.8, origin: "50% 75%" }
 };
 
+const sizePresetCmMap = {
+  XS: 5,
+  S: 10,
+  M: 15,
+  L: 20,
+  XL: 30
+};
+
+const sizeVisualizerConfig = {
+  phoneBaseHeight: 132,
+  phoneBaseWidth: 76,
+  phoneMinHeight: 78,
+  phoneBaseFontSize: 14,
+  phoneMinFontSize: 10.5,
+  tattooMinSize: 44,
+  tattooMatchSize: 132,
+  tattooMaxSize: 152
+};
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function lerp(start, end, progress) {
+  return start + (end - start) * progress;
+}
+
+function getPresetSizeCm(preset) {
+  return sizePresetCmMap[preset] || 15;
+}
+
+function getSizeVisualizerMetrics(cm) {
+  const {
+    phoneBaseHeight,
+    phoneBaseWidth,
+    phoneMinHeight,
+    phoneBaseFontSize,
+    phoneMinFontSize,
+    tattooMinSize,
+    tattooMatchSize,
+    tattooMaxSize
+  } = sizeVisualizerConfig;
+
+  if (!cm) {
+    return {
+      phoneHeight: phoneBaseHeight,
+      phoneWidth: phoneBaseWidth,
+      phoneFontSize: phoneBaseFontSize,
+      tattooSize: tattooMinSize,
+      tattooLabel: ""
+    };
+  }
+
+  let phoneHeight = phoneBaseHeight;
+  let phoneFontSize = phoneBaseFontSize;
+  let tattooSize = tattooMatchSize;
+
+  if (cm <= 15) {
+    const progress = clamp((cm - 5) / 10, 0, 1);
+    tattooSize = Math.round(lerp(tattooMinSize, tattooMatchSize, progress));
+  } else {
+    const progress = clamp((cm - 15) / 15, 0, 1);
+    phoneHeight = Math.round(lerp(phoneBaseHeight, phoneMinHeight, progress));
+    phoneFontSize = lerp(phoneBaseFontSize, phoneMinFontSize, progress);
+    tattooSize = Math.round(lerp(tattooMatchSize, tattooMaxSize, progress));
+  }
+
+  return {
+    phoneHeight,
+    phoneWidth: Math.round(phoneHeight * (phoneBaseWidth / phoneBaseHeight)),
+    phoneFontSize,
+    tattooSize,
+    tattooLabel: `${cm} см`
+  };
+}
+
 // DOM elements cache
 const wizardProgress = document.getElementById("wizardProgress");
 const wizardStepIndicator = document.getElementById("wizardStepIndicator");
@@ -637,6 +713,15 @@ function initWizard() {
         const customWrap = document.createElement("div");
         customWrap.className = "luxury-subzone-custom visible";
 
+        const submitCustomSubzone = () => {
+          const value = customInput.value.trim();
+          if (!value) return;
+          wizardState.bodyZone = "other";
+          wizardState.bodySubzone = "Другое";
+          wizardState.bodySubzoneCustom = value;
+          nextStep(6);
+        };
+
         const customInput = document.createElement("input");
         customInput.type = "text";
         customInput.id = "luxurySubzoneCustomInput";
@@ -660,19 +745,29 @@ function initWizard() {
         customInput.addEventListener("keydown", (e) => {
           if (e.key === "Enter") {
             e.preventDefault();
-            const value = customInput.value.trim();
-            if (!value) return;
-            wizardState.bodyZone = "other";
-            wizardState.bodySubzone = "Другое";
-            wizardState.bodySubzoneCustom = value;
-            nextStep(6);
+            submitCustomSubzone();
           }
         });
         customInput.addEventListener("blur", () => {
           wizardState.bodySubzoneCustom = customInput.value.trim();
         });
 
+        const customSubmitBtn = document.createElement("button");
+        customSubmitBtn.type = "button";
+        customSubmitBtn.className = "luxury-subzone-custom-submit";
+        customSubmitBtn.setAttribute("aria-label", "Продолжить");
+        customSubmitBtn.innerHTML = `
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 12h14M13 5l7 7-7 7"></path>
+          </svg>
+        `;
+        customSubmitBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          submitCustomSubzone();
+        });
+
         customWrap.appendChild(customInput);
+        customWrap.appendChild(customSubmitBtn);
         subzoneContainer.appendChild(customWrap);
       }
 
@@ -721,14 +816,7 @@ function initWizard() {
       document.querySelectorAll(".size-preset-card").forEach(c => c.classList.remove("selected"));
       card.classList.add("selected");
 
-      // Adjust slider
-      let sizeCm = 15;
-      if (preset === "XS") sizeCm = 5;
-      else if (preset === "S") sizeCm = 10;
-      else if (preset === "M") sizeCm = 15;
-      else if (preset === "L") sizeCm = 20;
-      else if (preset === "XL") sizeCm = 30;
-
+      const sizeCm = getPresetSizeCm(preset);
       wizardState.sizeCm = sizeCm;
       if (sizeSliderVal) {
         sizeSliderVal.textContent = `${sizeCm} см`;
@@ -741,31 +829,6 @@ function initWizard() {
       }
     });
   });
-
-  function updateSizeVisualizer(cm) {
-    const visualizerTattooBox = document.getElementById("visualizerTattooBox");
-    const visualizerPhoneBox = document.getElementById("visualizerPhoneBox");
-    if (!visualizerTattooBox || !visualizerPhoneBox) return;
-    if (!cm) {
-      visualizerPhoneBox.style.width = "76px";
-      visualizerPhoneBox.style.height = "132px";
-      visualizerPhoneBox.querySelector("span").textContent = "15 см";
-      visualizerTattooBox.style.width = "44px";
-      visualizerTattooBox.style.height = "44px";
-      visualizerTattooBox.querySelector("span").textContent = "";
-      return;
-    }
-    const maxCm = Math.max(15, cm);
-    const maxPx = 132;
-    const phoneHeight = Math.round((15 / maxCm) * maxPx);
-    const tattooSize = Math.round((cm / maxCm) * maxPx);
-    visualizerPhoneBox.style.height = `${phoneHeight}px`;
-    visualizerPhoneBox.style.width = `${Math.round(phoneHeight * 0.58)}px`;
-    visualizerPhoneBox.querySelector("span").textContent = "15 см";
-    visualizerTattooBox.style.width = `${tattooSize}px`;
-    visualizerTattooBox.style.height = `${tattooSize}px`;
-    visualizerTattooBox.querySelector("span").textContent = `${cm} см`;
-  }
 
   // Next triggers on Size
   if (sizeNextBtn) {
@@ -1131,27 +1194,20 @@ function restoreSelectionClasses() {
 function updateSizeVisualizer(cm) {
   const visualizerTattooBox = document.getElementById("visualizerTattooBox");
   const visualizerPhoneBox = document.getElementById("visualizerPhoneBox");
-  if (visualizerTattooBox && visualizerPhoneBox) {
-    if (!cm) {
-      visualizerPhoneBox.style.width = "76px";
-      visualizerPhoneBox.style.height = "132px";
-      visualizerPhoneBox.querySelector("span").textContent = "15 см";
-      visualizerTattooBox.style.width = "44px";
-      visualizerTattooBox.style.height = "44px";
-      visualizerTattooBox.querySelector("span").textContent = "";
-      return;
-    }
-    const maxCm = Math.max(15, cm);
-    const maxPx = 132;
-    const phoneHeight = Math.round((15 / maxCm) * maxPx);
-    const tattooSize = Math.round((cm / maxCm) * maxPx);
-    visualizerPhoneBox.style.height = `${phoneHeight}px`;
-    visualizerPhoneBox.style.width = `${Math.round(phoneHeight * 0.58)}px`;
-    visualizerPhoneBox.querySelector("span").textContent = "15 см";
-    visualizerTattooBox.style.width = `${tattooSize}px`;
-    visualizerTattooBox.style.height = `${tattooSize}px`;
-    visualizerTattooBox.querySelector("span").textContent = `${cm} см`;
-  }
+  if (!visualizerTattooBox || !visualizerPhoneBox) return;
+
+  const phoneLabel = visualizerPhoneBox.querySelector("span");
+  const tattooLabel = visualizerTattooBox.querySelector("span");
+  const metrics = getSizeVisualizerMetrics(cm);
+
+  visualizerPhoneBox.style.width = `${metrics.phoneWidth}px`;
+  visualizerPhoneBox.style.height = `${metrics.phoneHeight}px`;
+  visualizerPhoneBox.style.fontSize = `${metrics.phoneFontSize}px`;
+  visualizerTattooBox.style.width = `${metrics.tattooSize}px`;
+  visualizerTattooBox.style.height = `${metrics.tattooSize}px`;
+
+  if (phoneLabel) phoneLabel.textContent = "15\u00a0см";
+  if (tattooLabel) tattooLabel.textContent = metrics.tattooLabel;
 }
 
 function initLocationActions() {

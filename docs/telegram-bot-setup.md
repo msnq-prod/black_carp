@@ -5,7 +5,7 @@
 - `server.js` — сайт, API анкеты и Telegram webhook в одном Express-сервере.
 - SQLite — файл БД `data/black-carp.sqlite`.
 - `uploads/booking/` — локальное хранение эскизов и референсов.
-- Telegram Bot API — уведомления мастеру и `/start <code>` для клиента.
+- Telegram Bot API — `/start <code>` для клиента, уведомления мастеру и кнопки смены статуса.
 
 ## Локальный запуск
 
@@ -15,7 +15,8 @@
    - `BOT_USERNAME`;
    - `WEBHOOK_SECRET`;
    - `MASTER_CHAT_IDS`;
-   - `SITE_URL`.
+   - `SITE_URL`;
+   - `ALLOWED_ORIGINS`.
 3. Запустить:
 
 ```bash
@@ -27,6 +28,14 @@ npm run server
 - `data/black-carp.sqlite`;
 - таблицы БД;
 - `uploads/booking/`.
+
+Локальная проверка:
+
+```bash
+node --check server.js
+node --check script.js
+curl http://127.0.0.1:3001/health
+```
 
 ## Production
 
@@ -89,6 +98,18 @@ curl -X POST https://your-domain.ru/api/booking/submit \
   "requestId": "req_...",
   "publicCode": "BC...",
   "telegramUrl": "https://t.me/blackcarp_bot?start=BC...",
-  "masterNotified": true
+  "masterNotified": false
 }
 ```
+
+`masterNotified: false` в этом ответе — нормальное текущее поведение. Мастер получает карточку после того, как клиент откроет Telegram по deep link и бот обработает `/start <code>`.
+
+## Текущий поток заявки
+
+1. Сайт отправляет анкету в `POST /api/booking/submit`.
+2. Сервер сохраняет заявку в SQLite и файлы в `uploads/booking/`.
+3. Сервер возвращает `telegramUrl`.
+4. Клиент открывает Telegram.
+5. Telegram присылает webhook `/start <code>`.
+6. Сервер связывает клиента с заявкой и отправляет карточку мастеру.
+7. Мастер меняет статус inline-кнопками.

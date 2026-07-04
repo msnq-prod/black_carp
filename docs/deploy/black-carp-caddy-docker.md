@@ -1,63 +1,85 @@
-# Black Carp deploy
+# Black Carp — deploy через Caddy Docker
 
-## Target layout
+## Текущее подтвержденное состояние
+
+Продакшен-хост: `root@79.141.77.238`.
+
+На сервере уже есть общий Docker Compose stack с Caddy. Он обслуживает не только `black-carp.art`, поэтому изменения нужно держать строго в зоне Black Carp и не трогать конфигурацию `zagarami.com` без отдельной задачи.
+
+Подтвержденная ранее схема:
+
+- compose-файл: `/root/apps/stones/docker-compose.prod.yml`;
+- Caddyfile: `/root/apps/stones/docker/Caddyfile`;
+- Caddy-контейнер: `stones-caddy-1`;
+- Caddy root для Black Carp внутри контейнера: `/data/black-carp`;
+- файл в Docker volume: `/media/system/docker/volumes/stones_caddy_data/_data/black-carp/index.html`.
+
+Отдельно был назван путь `/data/black-carp/index.html`, но перед следующей заменой файла нужно заново проверить текущий mount на сервере.
+
+## Что деплоится сейчас
+
+Текущий проект уже не только статическая страница. В репозитории есть:
+
+- `index.html`, `styles.css`, `script.js` — сайт и booking wizard;
+- `server.js` — Express-сервер, API анкеты и Telegram webhook;
+- `.env.example` — пример runtime-настроек;
+- `data/` — SQLite-файл создается сервером локально;
+- `uploads/booking/` — вложения заявок создаются сервером локально.
+
+Для полноценной работы записи нужен Node.js backend, а не только статическая раздача `index.html`.
+
+## Backend запуск
+
+```bash
+npm install --omit=dev
+npm start
+```
+
+Минимальные env-переменные:
 
 ```text
-/srv/www/black-carp
+PORT=3001
+SITE_URL=https://black-carp.art
+BOT_TOKEN=...
+BOT_USERNAME=blackcarp_bot
+WEBHOOK_SECRET=...
+MASTER_CHAT_IDS=...
+DB_PATH=./data/black-carp.sqlite
+JSON_LIMIT=25mb
+ALLOWED_ORIGINS=https://black-carp.art,https://www.black-carp.art
+TELEGRAM_API_BASE=https://api.telegram.org
 ```
 
-Caddy stays in the existing Docker compose project.
+## Caddy
 
-## Caddy Docker volume
-
-Add a read-only bind mount to the Caddy service:
-
-```yaml
-volumes:
-  - /srv/www/black-carp:/srv/www/black-carp:ro
-```
-
-## Caddyfile
-
-Use the mounted path as the site root:
+Если backend запущен на `127.0.0.1:3001`, Black Carp должен проксироваться в Node.js:
 
 ```caddy
-black-carp.art {
-  root * /srv/www/black-carp
-  file_server
+black-carp.art, www.black-carp.art {
+  reverse_proxy 127.0.0.1:3001
 }
 ```
 
-## Deployment
+Если нужно оставить только статический placeholder, используется `root * /data/black-carp` и `file_server`, но booking API и Telegram webhook в таком режиме работать не будут.
 
-GitHub Actions connects to the production server as `blackcarp-deploy`.
+## Проверка после деплоя
 
-That SSH key is restricted on the server with a forced command, so it can only run:
-
-```text
-/usr/local/bin/black-carp-deploy
+```bash
+curl -I https://black-carp.art/
+curl https://black-carp.art/health
+curl -X POST https://black-carp.art/api/booking/submit \
+  -H "Content-Type: application/json" \
+  -d '{"idempotencyKey":"deploy-test-1","consentAt":"2026-07-04T00:00:00.000Z","firstTattoo":"yes","hasSketch":false,"bodyZone":"Руки","bodySubzone":"Предплечье","bodyView":"front","sizePreset":"M","sizeCm":15,"ideaText":"Тестовая заявка","attachments":[]}'
 ```
 
-The production server then pulls `main` from GitHub with its own read-only deploy key.
+Telegram webhook:
 
-Required GitHub Actions secrets:
-
-```text
-SERVER_HOST
-SERVER_USER
-SERVER_SSH_KEY
+```bash
+curl "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" \
+  -d "url=https://black-carp.art/telegram/webhook" \
+  -d "secret_token=<WEBHOOK_SECRET>"
 ```
 
-Deploy script:
+## Важно
 
-```text
-/usr/local/bin/black-carp-deploy
-```
-
-## GitHub Actions
-
-GitHub Actions only validates required static files:
-
-```text
-.github/workflows/validate.yml
-```
+В этом репозитории сейчас нет подтвержденного `.github/workflows/validate.yml`. Старое описание GitHub Actions и `/srv/www/black-carp` не считается актуальным без отдельной проверки.
