@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <meta name="theme-color" content="#11100e">
+    <title>Black Carp CRM</title>
+    <link rel="stylesheet" href="/crm/styles.css">
+  </head>
+  <body>
+    <main class="app-shell" id="app">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Black Carp">BLACK<br>CARP</a>
+        <div class="topbar__title"><span>BLACK CARP</span><strong>CRM</strong></div>
+        <span class="sync-status" id="syncStatus" role="status" aria-live="polite"></span>
+        <button class="icon-button" id="refreshButton" type="button">Обновить</button>
+      </header>
+      <section class="auth-state" id="authState" hidden>
+        <p class="eyebrow">ДОСТУП ОГРАНИЧЕН</p>
+        <h1>Откройте CRM<br>из Telegram.</h1>
+        <p>WebApp доступен только мастеру из защищённой кнопки бота.</p>
+      </section>
+      <section class="workspace" id="workspace" hidden>
+        <aside class="request-list" aria-label="Список заявок">
+          <div class="list-heading">
+            <p class="eyebrow">ВХОДЯЩИЕ</p>
+            <h1>Заявки</h1>
+          </div>
+          <div class="counters" id="counters"></div>
+          <label class="search"><input id="searchInput" type="search" aria-label="Поиск заявок" placeholder="Имя, контакт или номер"></label>
+          <div class="filters" id="filters" aria-label="Фильтр статусов"></div>
+          <div class="request-rows" id="requestRows" aria-live="polite"></div>
+          <button class="load-more" id="loadMore" type="button" hidden>Показать ещё</button>
+        </aside>
+        <section class="request-detail" id="requestDetail" aria-live="polite" tabindex="-1">
+          <div class="empty-detail"><p class="eyebrow">BLACK CARP CRM</p><h2>Выберите<br>заявку.</h2></div>
+        </section>
+      </section>
+    </main>
+    <dialog class="confirm-dialog" id="statusConfirm">
+      <form method="dialog">
+        <p class="eyebrow">ПОДТВЕРЖДЕНИЕ</p>
+        <h2 id="statusConfirmTitle">Изменить статус?</h2>
+        <p id="statusConfirmText">Это действие нельзя отменить.</p>
+        <div class="confirm-dialog__actions">
+          <button value="cancel">Отмена</button>
+          <button class="confirm-dialog__primary" value="confirm">Подтвердить</button>
+        </div>
+      </form>
+    </dialog>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="/crm/app.js"></script>
+  </body>
+</html>

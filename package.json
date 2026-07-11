@@ -7,17 +7,18 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "editor": "node editor-server.js",
+    "test": "node --test",
+    "check": "node --check server.js && node --check script.js && node --check crm/app.js",
     "server": "node server.js",
     "start": "node server.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=22.5 <23"
+  },
   "dependencies": {
-    "cheerio": "^1.0.0-rc.12",
-    "express": "^4.19.2",
-    "multer": "^1.4.5-lts.1"
+    "express": "^4.19.2"
   }
 }

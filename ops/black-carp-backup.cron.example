@@ -1,0 +1,2 @@
+# Install into /etc/cron.d/black-carp-backup after creating /srv/backups/black-carp.
+30 3 * * * root BLACK_CARP_APP_DIR=/srv/www/black-carp BLACK_CARP_BACKUP_DIR=/srv/backups/black-carp /srv/www/black-carp/ops/backup.sh >> /var/log/black-carp-backup.log 2>&1

@@ -1,5 +1,9 @@
 # Progress
 
+## Implementation follow-up
+
+Production gaps реализованы в ветке `codex/crm-production-readiness`. Актуальное подтверждение: `93_IMPLEMENTATION_RESULT.md`.
+
 - [x] Scope locked
 - [x] Decomposition written
 - [x] Orchestration written

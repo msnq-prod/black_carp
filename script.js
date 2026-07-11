@@ -28,19 +28,19 @@ const works = [
   {
     title: "Nocturne I",
     meta: "forearm / graphic / 2026",
-    image: "assets/media/hero-forearm.png",
+    image: "assets/media/work-hero-01.jpg",
     alt: "Графическая татуировка на предплечье"
   },
   {
     title: "Arc Study",
     meta: "back / graphic / 2026",
-    image: "assets/media/work-shoulder.png",
+    image: "assets/media/work-hero-02.jpg",
     alt: "Графическая татуировка на спине"
   },
   {
     title: "Quiet Line",
     meta: "arm detail / fine line / 2026",
-    image: "assets/media/work-detail.png",
+    image: "assets/media/work-hero-03.jpg",
     alt: "Макро-фрагмент графической татуировки"
   },
   {
@@ -52,19 +52,19 @@ const works = [
   {
     title: "Axis",
     meta: "forearm / graphic / 2025",
-    image: "assets/media/hero-forearm.png",
+    image: "assets/media/work-hero-01.jpg",
     alt: "Графическая татуировка на предплечье"
   },
   {
     title: "Shoulder Field",
     meta: "shoulder / graphic / 2025",
-    image: "assets/media/work-shoulder.png",
+    image: "assets/media/work-hero-02.jpg",
     alt: "Графическая татуировка на плече"
   },
   {
     title: "Skin Map",
     meta: "detail / dotwork / 2026",
-    image: "assets/media/work-detail.png",
+    image: "assets/media/work-hero-03.jpg",
     alt: "Деталь татуировки на коже"
   },
   {
@@ -113,15 +113,51 @@ function setView(name) {
     app.scrollTo({ top: 0, behavior: "auto" });
     window.scrollTo({ top: 0, behavior: "auto" });
   }
+  if (name === "profile") loadProfileStatus();
 }
 
-navButtons.forEach((button) => {
-  button.addEventListener("click", () => setView(button.dataset.nav));
-});
+async function loadProfileStatus() {
+  const codeNode = document.getElementById("profileCode");
+  const statusNode = document.getElementById("profileStatusValue");
+  const dateNode = document.getElementById("profileSubmittedAt");
+  const messageNode = document.getElementById("profileMessage");
+  const labels = { new:"Новая", in_review:"В работе", need_details:"Нужно уточнение", approved:"Согласована", scheduled:"Запланирована", done:"Завершена", cancelled:"Отменена" };
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem("black_carp_last_booking") || "null"); } catch { saved = null; }
+  if (!saved?.publicCode) {
+    if (messageNode) messageNode.textContent = "На этом устройстве ещё нет отправленных заявок.";
+    return;
+  }
+  if (codeNode) codeNode.textContent = saved.publicCode;
+  if (dateNode) dateNode.textContent = new Intl.DateTimeFormat("ru-RU", { dateStyle:"medium", timeStyle:"short" }).format(new Date(saved.submittedAt));
+  if (statusNode) statusNode.textContent = "Проверяем…";
+  try {
+    const response = await fetch(`${bookingApiBase}/api/booking/status/${encodeURIComponent(saved.publicCode)}`);
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "status_failed");
+    if (statusNode) statusNode.textContent = labels[data.status] || data.status;
+    if (messageNode) messageNode.textContent = "Актуальный статус последней заявки.";
+  } catch {
+    if (statusNode) statusNode.textContent = "Временно недоступен";
+    if (messageNode) messageNode.textContent = "Заявка сохранена. Статус обновится при восстановлении связи.";
+  }
+}
 
-openButtons.forEach((button) => {
-  button.addEventListener("click", () => setView(button.dataset.openView));
-});
+function navigateToView(name) {
+  const hash = `#/${name}`;
+  if (location.hash !== hash) location.hash = hash;
+  setView(name);
+}
+
+function viewFromHash() {
+  const value = location.hash.replace(/^#\/?/, "");
+  return viewTitles[value] ? value : "home";
+}
+
+navButtons.forEach((button) => button.addEventListener("click", () => navigateToView(button.dataset.nav)));
+openButtons.forEach((button) => button.addEventListener("click", () => navigateToView(button.dataset.openView)));
+window.addEventListener("hashchange", () => setView(viewFromHash()));
+setView(viewFromHash());
 
 if (worksTopButton && worksFeed) {
   worksTopButton.addEventListener("click", () => {
@@ -175,10 +211,18 @@ const wizardState = {
   sizePreset: null,
   sizeCm: null,
   ideaText: "",
-  referenceImages: []
+  referenceImages: [],
+  clientName: "",
+  contactType: "telegram",
+  contactValue: "",
+  contactComment: ""
 };
 
 let wizardHistory = [2];
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
+}
 
 const subzonesData = {
   head: ["Шея", "За ухом", "Голова", "Лицо"],
@@ -322,6 +366,14 @@ const wizardSubmitBtn = document.getElementById("wizardSubmitBtn");
 const wizardRestartBtn = document.getElementById("wizardRestartBtn");
 const wizardToast = document.getElementById("wizardToast");
 const bookingConsent = document.getElementById("bookingConsent");
+const bookingClientName = document.getElementById("bookingClientName");
+const bookingContactType = document.getElementById("bookingContactType");
+const bookingContactValue = document.getElementById("bookingContactValue");
+const bookingContactComment = document.getElementById("bookingContactComment");
+const bookingConfirmationForm = document.getElementById("bookingConfirmationForm");
+const bookingSuccess = document.getElementById("bookingSuccess");
+const bookingSuccessCode = document.getElementById("bookingSuccessCode");
+const wizardSuccessRestartBtn = document.getElementById("wizardSuccessRestartBtn");
 
 // Compression utility
 function compressImage(file, callback) {
@@ -379,6 +431,11 @@ function updateProgress(step) {
   if (wizardStepIndicator) {
     wizardStepIndicator.textContent = `Шаг ${Math.min(stepIndex, totalSteps)} из ${totalSteps}`;
   }
+  const progress = wizardProgress.closest("[role='progressbar']");
+  if (progress) {
+    progress.setAttribute("aria-valuemax", String(totalSteps));
+    progress.setAttribute("aria-valuenow", String(Math.min(stepIndex, totalSteps)));
+  }
 
   // Control back button visibility
   if (wizardBackBtn) {
@@ -414,6 +471,11 @@ function goToSlide(step) {
 
   updateProgress(step);
   saveStateToStorage();
+  const activeHeading = document.querySelector(`.wizard-slide[data-step="${step}"] .wizard-question-title`);
+  if (activeHeading) {
+    activeHeading.setAttribute("tabindex", "-1");
+    requestAnimationFrame(() => activeHeading.focus({ preventScroll: true }));
+  }
 }
 
 function nextStep(target) {
@@ -444,6 +506,10 @@ function resetWizard() {
   wizardState.sizeCm = null;
   wizardState.ideaText = "";
   wizardState.referenceImages = [];
+  wizardState.clientName = "";
+  wizardState.contactType = "telegram";
+  wizardState.contactValue = "";
+  wizardState.contactComment = "";
 
   wizardHistory = [2];
 
@@ -469,10 +535,22 @@ function resetWizard() {
     if (label) label.textContent = "Продолжить без размера";
   }
   if (bookingConsent) bookingConsent.checked = false;
+  if (bookingClientName) bookingClientName.value = "";
+  if (bookingContactType) bookingContactType.value = "telegram";
+  if (bookingContactValue) bookingContactValue.value = "";
+  if (bookingContactComment) bookingContactComment.value = "";
+  if (bookingConfirmationForm) bookingConfirmationForm.hidden = false;
+  if (bookingSuccess) bookingSuccess.hidden = true;
+  if (wizardSubmitBtn) {
+    wizardSubmitBtn.disabled = false;
+    const submitLabel = wizardSubmitBtn.querySelector("span");
+    if (submitLabel) submitLabel.textContent = "Отправить заявку";
+  }
 
   resetBodySilhouette();
   localStorage.removeItem("black_carp_booking_idempotency_key");
-  localStorage.removeItem("black_carp_last_booking");
+  localStorage.removeItem("black_carp_booking_state");
+  localStorage.removeItem("black_carp_booking_history");
   goToSlide(2);
 }
 
@@ -552,12 +630,17 @@ function initWizard() {
 
   // Restart Button
   if (wizardRestartBtn) {
-    wizardRestartBtn.addEventListener("click", () => {
-      if (confirm("Вы уверены, что хотите сбросить анкету и начать заново?")) {
-        resetWizard();
-      }
-    });
+    wizardRestartBtn.addEventListener("click", resetWizard);
   }
+  if (wizardSuccessRestartBtn) wizardSuccessRestartBtn.addEventListener("click", resetWizard);
+  [bookingClientName, bookingContactValue, bookingContactComment].forEach((field) => field?.addEventListener("input", () => {
+    if (field === bookingClientName) wizardState.clientName = field.value;
+    if (field === bookingContactValue) wizardState.contactValue = field.value;
+    if (field === bookingContactComment) wizardState.contactComment = field.value;
+    field.removeAttribute("aria-invalid");
+    saveStateToStorage();
+  }));
+  bookingContactType?.addEventListener("change", () => { wizardState.contactType = bookingContactType.value; saveStateToStorage(); });
 
   // File Upload 1 (Sketch)
   if (sketchUploader && sketchInput) {
@@ -595,6 +678,11 @@ function initWizard() {
 
   if (sketchNextBtn) {
     sketchNextBtn.addEventListener("click", () => {
+      if (wizardState.hasSketch && !wizardState.sketchData) {
+        showToast("Добавьте файл эскиза, чтобы продолжить.");
+        sketchInput?.focus();
+        return;
+      }
       if (sketchComment) wizardState.sketchComment = sketchComment.value;
       nextStep(5);
     });
@@ -630,7 +718,7 @@ function initWizard() {
       refPreviewsContainer.innerHTML = wizardState.referenceImages.map((img, idx) => `
         <div class="uploader-preview-item">
           <img src="${img}" alt="Референс ${idx + 1}">
-          <button type="button" class="btn-remove-item" data-index="${idx}">
+          <button type="button" class="btn-remove-item" data-index="${idx}" aria-label="Удалить референс ${idx + 1}">
             <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
         </div>
@@ -867,23 +955,23 @@ function initWizard() {
     wizardSummaryCard.innerHTML = `
       <div class="summary-row">
         <span class="summary-label">Опыт:</span>
-        <span class="summary-value">${experienceText}</span>
+        <span class="summary-value">${escapeHtml(experienceText)}</span>
       </div>
       <div class="summary-row">
         <span class="summary-label">Свой эскиз:</span>
-        <span class="summary-value">${sketchText}</span>
+        <span class="summary-value">${escapeHtml(sketchText)}</span>
       </div>
       <div class="summary-row">
         <span class="summary-label">Зона тела:</span>
-        <span class="summary-value">${locationText}</span>
+        <span class="summary-value">${escapeHtml(locationText)}</span>
       </div>
       <div class="summary-row">
         <span class="summary-label">Размер:</span>
-        <span class="summary-value">${sizeText}</span>
+        <span class="summary-value">${escapeHtml(sizeText)}</span>
       </div>
       <div class="summary-row">
         <span class="summary-label">Идея:</span>
-        <span class="summary-value">${ideaTextShort}</span>
+        <span class="summary-value">${escapeHtml(ideaTextShort)}</span>
       </div>
     `;
 
@@ -891,6 +979,7 @@ function initWizard() {
     const est = estimatePrice(wizardState.bodyZone, wizardState.bodySubzone, wizardState.sizeCm, wizardState.sizePreset);
     if (wizardPriceEstimate) wizardPriceEstimate.textContent = est;
   }
+  window.renderBlackCarpBookingSummary = renderSummary;
 
   function estimatePrice(zone, subzone, sizeCm, sizePreset) {
     if (!sizeCm) return "После консультации";
@@ -910,36 +999,87 @@ function initWizard() {
   // Submit action
   if (wizardSubmitBtn) {
     wizardSubmitBtn.addEventListener("click", async () => {
+      if (!validateContactFields()) return;
       if (!bookingConsent?.checked) {
         showToast("Подтвердите согласие на отправку анкеты.");
         return;
       }
 
       const textReport = compileTextReport();
-      const originalLabel = wizardSubmitBtn.querySelector("span")?.textContent || "Перейти в Telegram";
+      const originalLabel = wizardSubmitBtn.querySelector("span")?.textContent || "Отправить заявку";
       setSubmitState(true, "Отправляем анкету");
 
       try {
         const result = await submitBookingToApi();
-        await copyToClipboard(textReport);
-        showToast(result.masterNotified
-          ? "Анкета отправлена мастеру. Открываем Telegram..."
-          : "Анкета сохранена. Открываем Telegram..."
-        );
-        setTimeout(() => {
-          window.open(result.telegramUrl, "_blank");
-          setSubmitState(false, originalLabel);
-        }, 900);
+        showBookingSuccess(result);
       } catch (err) {
         console.error("Booking submit failed: ", err);
         await copyToClipboard(textReport);
-        showToast("Не удалось отправить на сервер. Анкета скопирована.");
-        setTimeout(() => {
-          window.open(fallbackTelegramUrl(), "_blank");
-          setSubmitState(false, originalLabel);
-        }, 1200);
+        showToast("Не удалось отправить заявку. Данные скопированы — попробуйте ещё раз.");
+        setSubmitState(false, originalLabel);
       }
     });
+  }
+
+  function validateContactFields() {
+    const name = bookingClientName?.value.trim() || "";
+    const contact = bookingContactValue?.value.trim() || "";
+    const contactType = bookingContactType?.value || "telegram";
+    for (const field of [bookingClientName, bookingContactValue]) field?.removeAttribute("aria-invalid");
+    if (name.length < 2 || name.length > 80) {
+      bookingClientName?.setAttribute("aria-invalid", "true");
+      bookingClientName?.focus();
+      showToast("Укажите имя — от 2 до 80 символов.");
+      return false;
+    }
+    if (contact.length < 3 || contact.length > 120) {
+      bookingContactValue?.setAttribute("aria-invalid", "true");
+      bookingContactValue?.focus();
+      showToast("Укажите Telegram, телефон или другой контакт.");
+      return false;
+    }
+    if (contactType === "telegram" && !/^@?[A-Za-z0-9_]{5,32}$/.test(contact)) {
+      bookingContactValue?.setAttribute("aria-invalid", "true");
+      bookingContactValue?.focus();
+      showToast("Укажите корректный Telegram username.");
+      return false;
+    }
+    if (contactType === "phone" && (!/^[+\d\s()-]+$/.test(contact) || (contact.match(/\d/g) || []).length < 7 || (contact.match(/\d/g) || []).length > 15)) {
+      bookingContactValue?.setAttribute("aria-invalid", "true");
+      bookingContactValue?.focus();
+      showToast("Укажите корректный номер телефона.");
+      return false;
+    }
+    wizardState.clientName = name;
+    wizardState.contactType = contactType;
+    wizardState.contactValue = contact;
+    wizardState.contactComment = bookingContactComment?.value.trim() || "";
+    saveStateToStorage();
+    return true;
+  }
+
+  function showBookingSuccess(result) {
+    localStorage.removeItem("black_carp_booking_idempotency_key");
+    localStorage.removeItem("black_carp_booking_state");
+    localStorage.removeItem("black_carp_booking_history");
+    if (bookingConfirmationForm) bookingConfirmationForm.hidden = true;
+    if (bookingSuccess) {
+      bookingSuccess.hidden = false;
+      const message = bookingSuccess.querySelector("p:not(.screen-label)");
+      if (message) message.textContent = result.masterNotified
+        ? "Мастер получил вашу анкету и свяжется по указанному контакту."
+        : "Заявка сохранена. Мастер получит уведомление сразу после восстановления связи.";
+      bookingSuccess.focus();
+    }
+    if (bookingSuccessCode) bookingSuccessCode.textContent = result.publicCode || "";
+    setSubmitState(true, "Заявка отправлена");
+  }
+
+  function openTelegramLink(url, originalLabel) {
+    window.location.assign(url);
+    setTimeout(() => {
+      setSubmitState(false, originalLabel);
+    }, 2500);
   }
 
   function setSubmitState(isSubmitting, label) {
@@ -957,7 +1097,7 @@ function initWizard() {
     });
     const data = await response.json().catch(() => null);
 
-    if (!response.ok || !data?.ok || !data.telegramUrl) {
+    if (!response.ok || !data?.ok) {
       throw new Error(data?.error || `booking_submit_${response.status}`);
     }
 
@@ -993,6 +1133,10 @@ function initWizard() {
       sizeCm: wizardState.sizeCm,
       ideaText: wizardState.ideaText || "",
       priceEstimate,
+      clientName: wizardState.clientName,
+      contactType: wizardState.contactType,
+      contactValue: wizardState.contactValue,
+      contactComment: wizardState.contactComment,
       attachments: buildBookingAttachments()
     };
   }
@@ -1082,20 +1226,16 @@ function initWizard() {
     }, 2800);
   }
 
-  try {
-    localStorage.removeItem("black_carp_booking_state");
-    localStorage.removeItem("black_carp_booking_history");
-  } catch (e) {
-    console.error("Local storage reset failed", e);
-  }
-  updateProgress(2);
   renderLuxuryMenu();
+  loadStateFromStorage();
 }
 
 function saveStateToStorage() {
   try {
     const stateCopy = { ...wizardState };
     // Don't store large image files in local storage to prevent quota errors
+    stateCopy.hadSketchFile = Boolean(stateCopy.sketchData);
+    stateCopy.referenceImageCount = stateCopy.referenceImages.length;
     stateCopy.sketchData = null;
     stateCopy.referenceImages = [];
 
@@ -1117,10 +1257,21 @@ function loadStateFromStorage() {
       // Restore values
       Object.assign(wizardState, parsedState);
       wizardState.sizeCm = Number(wizardState.sizeCm) || null;
-      wizardHistory = [2];
+      const parsedHistory = JSON.parse(savedHistory);
+      const allowedSteps = new Set(["2", "3", "4", "4a", "5", "6", "7", "8"]);
+      wizardHistory = Array.isArray(parsedHistory)
+        ? parsedHistory.filter((step) => allowedSteps.has(String(step)))
+        : [2];
+      if (!wizardHistory.length) wizardHistory = [2];
+
+      if (wizardState.hasSketch && !wizardState.sketchData && wizardHistory.some((step) => String(step) === "4a")) {
+        const uploadIndex = wizardHistory.findIndex((step) => String(step) === "4a");
+        wizardHistory = wizardHistory.slice(0, uploadIndex + 1);
+        setTimeout(() => showToast("После обновления добавьте файл эскиза заново."), 0);
+      }
 
       // Restore UI indicators
-      const lastStep = 2;
+      const lastStep = wizardHistory[wizardHistory.length - 1];
 
       // Update form textareas/options based on saved values
       if (wizardState.ideaText && tattooIdeaText) {
@@ -1129,6 +1280,10 @@ function loadStateFromStorage() {
       if (wizardState.sketchComment && sketchComment) {
         sketchComment.value = wizardState.sketchComment;
       }
+      if (bookingClientName) bookingClientName.value = wizardState.clientName || "";
+      if (bookingContactType) bookingContactType.value = wizardState.contactType || "telegram";
+      if (bookingContactValue) bookingContactValue.value = wizardState.contactValue || "";
+      if (bookingContactComment) bookingContactComment.value = wizardState.contactComment || "";
       if (wizardState.sizeCm) {
         if (sizeSliderVal) sizeSliderVal.textContent = `${wizardState.sizeCm} см`;
         updateSizeVisualizer(wizardState.sizeCm);
@@ -1148,6 +1303,7 @@ function loadStateFromStorage() {
 
       // Restore option selections in HTML
       restoreSelectionClasses();
+      if (String(lastStep) === "8") window.renderBlackCarpBookingSummary?.();
       goToSlide(lastStep);
     } else {
       updateProgress(2);

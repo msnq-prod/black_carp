@@ -5,7 +5,6 @@ const crypto = require("crypto");
 const https = require("https");
 const { DatabaseSync } = require("node:sqlite");
 
-const app = express();
 const rootDir = __dirname;
 loadEnvFile(path.join(rootDir, ".env"));
 
@@ -14,23 +13,51 @@ const uploadsDir = path.join(rootDir, "uploads", "booking");
 const dbPath = process.env.DB_PATH || path.join(dataDir, "black-carp.sqlite");
 const port = Number(process.env.PORT || 3001);
 const botUsername = (process.env.BOT_USERNAME || "blackcarp_bot").replace(/^@/, "");
+const host = process.env.HOST || (fs.existsSync("/.dockerenv") ? "0.0.0.0" : "127.0.0.1");
+const CRM_STATUSES = ["new", "in_review", "need_details", "approved", "scheduled", "done", "cancelled"];
+const CRM_TRANSITIONS = {
+  new: ["in_review", "need_details", "approved", "scheduled", "cancelled"],
+  in_review: ["need_details", "approved", "scheduled", "cancelled"],
+  need_details: ["in_review", "approved", "cancelled"],
+  approved: ["scheduled", "cancelled"],
+  scheduled: ["done", "cancelled"],
+  done: [],
+  cancelled: []
+};
+const bookingRateBuckets = new Map();
 
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(uploadsDir, { recursive: true });
 
+const databaseExisted = fs.existsSync(dbPath);
 const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA journal_mode = WAL;");
 db.exec("PRAGMA foreign_keys = ON;");
+hardenRuntimePermissions();
+backupDatabaseBeforeMigration(db, databaseExisted);
 db.exec(schemaSql());
+runMigrations(db);
 
+const app = express();
+app.set("trust proxy", "loopback");
+
+app.use(securityHeaders);
 app.use(express.json({ limit: process.env.JSON_LIMIT || "25mb" }));
 app.use(cors);
+app.use("/api/crm", (req, res, next) => { res.setHeader("Cache-Control", "private, no-store"); next(); });
 
 app.get("/health", (req, res) => {
-  res.json({ ok: true });
+  try {
+    db.prepare("SELECT 1 AS ok").get();
+    const missing = requiredConfiguration();
+    const ready = missing.length === 0;
+    res.status(ready ? 200 : 503).json({ ok: ready, service: "black-carp", database: "ready", configuration: ready ? "ready" : "incomplete", missing });
+  } catch {
+    res.status(503).json({ ok: false, database: "unavailable" });
+  }
 });
 
-app.post("/api/booking/submit", async (req, res) => {
+app.post("/api/booking/submit", bookingRateLimit, async (req, res) => {
   try {
     const payload = req.body;
     const validationError = validateBookingPayload(payload);
@@ -39,7 +66,7 @@ app.post("/api/booking/submit", async (req, res) => {
     }
 
     const existing = payload.idempotencyKey
-      ? db.prepare("SELECT id, public_code FROM booking_requests WHERE idempotency_key = ?").get(payload.idempotencyKey)
+      ? db.prepare("SELECT id, public_code, status, master_notified_at FROM booking_requests WHERE idempotency_key = ?").get(payload.idempotencyKey)
       : null;
 
     if (existing) {
@@ -48,6 +75,8 @@ app.post("/api/booking/submit", async (req, res) => {
         requestId: existing.id,
         publicCode: existing.public_code,
         telegramUrl: telegramStartUrl(existing.public_code),
+        status: existing.status,
+        masterNotified: Boolean(existing.master_notified_at),
         duplicate: true
       });
     }
@@ -55,18 +84,27 @@ app.post("/api/booking/submit", async (req, res) => {
     const requestId = `req_${crypto.randomUUID()}`;
     const publicCode = createPublicCode();
     const now = new Date().toISOString();
-    const priceEstimate = String(payload.priceEstimate || estimatePrice(payload));
-    const attachments = saveAttachments(requestId, payload.attachments || []);
+    const priceEstimate = estimatePrice(payload);
+    let attachments = [];
+    try {
+      attachments = saveAttachments(requestId, payload.attachments || []);
+    } catch (error) {
+      cleanupRequestFiles(requestId);
+      throw error;
+    }
 
-    db.prepare(`
+    try {
+      db.exec("BEGIN IMMEDIATE");
+      db.prepare(`
       INSERT INTO booking_requests (
         id, public_code, idempotency_key, status, source,
         first_tattoo, been_to_master, has_sketch, sketch_comment,
         body_zone, body_subzone, body_view, size_preset, size_cm,
         idea_text, price_estimate, consent_at, submitted_at,
-        client_ip_hash, user_agent_hash, created_at, updated_at
+        client_name, contact_type, contact_value, contact_comment,
+        crm_updated_at, client_ip_hash, user_agent_hash, created_at, updated_at
       )
-      VALUES (?, ?, ?, 'submitted', 'website', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, 'new', 'website', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       requestId,
       publicCode,
@@ -75,8 +113,8 @@ app.post("/api/booking/submit", async (req, res) => {
       payload.beenToMaster || null,
       payload.hasSketch ? 1 : 0,
       normalizeText(payload.sketchComment),
-      payload.bodyZone,
-      payload.bodySubzone,
+      normalizeShortText(payload.bodyZone, 80),
+      normalizeShortText(payload.bodySubzone, 80),
       payload.bodyView || "front",
       payload.sizePreset || null,
       payload.sizeCm ? Number(payload.sizeCm) : null,
@@ -84,17 +122,22 @@ app.post("/api/booking/submit", async (req, res) => {
       priceEstimate,
       payload.consentAt || now,
       now,
+      normalizeContactName(payload.clientName),
+      payload.contactType,
+      normalizeContactValue(payload.contactValue, payload.contactType),
+      normalizeShortText(payload.contactComment, 500),
+      now,
       sha256(req.ip || ""),
       sha256(req.get("user-agent") || ""),
       now,
       now
     );
 
-    const insertAttachment = db.prepare(`
+      const insertAttachment = db.prepare(`
       INSERT INTO booking_attachments (id, request_id, kind, file_path, mime_type, size_bytes, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    for (const attachment of attachments) {
+      for (const attachment of attachments) {
       insertAttachment.run(
         attachment.id,
         requestId,
@@ -104,19 +147,27 @@ app.post("/api/booking/submit", async (req, res) => {
         attachment.sizeBytes,
         now
       );
+      }
+
+      appendStatus(requestId, null, "new", "system", null, "Анкета сохранена с сайта");
+      appendCrmActivity(requestId, "system", null, "request_created", { publicCode });
+      enqueueMasterNotification(requestId, now);
+      db.exec("COMMIT");
+    } catch (error) {
+      try { db.exec("ROLLBACK"); } catch {}
+      cleanupRequestFiles(requestId);
+      throw error;
     }
 
-    appendStatus(requestId, null, "awaiting_client_start", "system", null, "Анкета сохранена с сайта");
-
-    db.prepare("UPDATE booking_requests SET status = 'awaiting_client_start', updated_at = ? WHERE id = ?")
-      .run(now, requestId);
+    const notifyResult = await deliverPendingNotification(requestId);
 
     res.json({
       ok: true,
       requestId,
       publicCode,
       telegramUrl: telegramStartUrl(publicCode),
-      masterNotified: false
+      status: "new",
+      masterNotified: notifyResult.ok
     });
   } catch (error) {
     console.error("booking_submit_error", error);
@@ -124,19 +175,136 @@ app.post("/api/booking/submit", async (req, res) => {
   }
 });
 
+app.get("/api/crm/me", requireCrmAuth, (req, res) => {
+  res.json({ ok: true, master: { telegramId: Number(req.master.telegramId), name: req.master.name } });
+});
+
+app.get("/api/crm/requests", requireCrmAuth, (req, res) => {
+  const status = String(req.query.status || "").trim();
+  const q = normalizeShortText(req.query.q, 120);
+  const from = validDateFilter(req.query.from);
+  const to = validDateFilter(req.query.to);
+  const limit = Math.max(1, Math.min(Number(req.query.limit) || 30, 100));
+  const cursor = decodeCursor(req.query.cursor);
+  if (status && !CRM_STATUSES.includes(status)) return res.status(400).json({ ok: false, error: "invalid_status" });
+  if ((req.query.from && !from) || (req.query.to && !to) || (req.query.cursor && !cursor)) return res.status(400).json({ ok: false, error: "invalid_filter" });
+  const conditions = [];
+  const values = [];
+  if (status) { conditions.push("r.status = ?"); values.push(status); }
+  if (q) { conditions.push("(r.public_code LIKE ? OR r.client_name LIKE ? OR r.contact_value LIKE ?)"); values.push(`%${escapeLike(q)}%`, `%${escapeLike(q)}%`, `%${escapeLike(q)}%`); }
+  if (from) { conditions.push("r.created_at >= ?"); values.push(from); }
+  if (to) { conditions.push("r.created_at <= ?"); values.push(to); }
+  if (cursor) { conditions.push("(r.created_at < ? OR (r.created_at = ? AND r.id < ?))"); values.push(cursor.createdAt, cursor.createdAt, cursor.id); }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const rows = db.prepare(`SELECT r.id, r.public_code, r.status, r.client_name, r.contact_value, r.body_zone, r.body_subzone, r.size_cm, r.has_sketch, r.created_at, EXISTS(SELECT 1 FROM booking_attachments a WHERE a.request_id=r.id) AS has_attachments FROM booking_requests r ${where} ORDER BY r.created_at DESC, r.id DESC LIMIT ?`).all(...values, limit + 1);
+  const hasMore = rows.length > limit;
+  const items = rows.slice(0, limit).map(crmListItem);
+  const last = items.at(-1);
+  const counts = Object.fromEntries(db.prepare("SELECT status, COUNT(*) AS count FROM booking_requests GROUP BY status").all().map((row) => [row.status, Number(row.count)]));
+  res.json({ ok: true, items, counts, nextCursor: hasMore && last ? encodeCursor({ createdAt: last.createdAt, id: last.id }) : null });
+});
+
+app.get("/api/crm/requests/:id", requireCrmAuth, (req, res) => {
+  const request = crmRequestById(req.params.id);
+  if (!request) return res.status(404).json({ ok: false, error: "not_found" });
+  appendCrmActivity(request.id, "master", req.master.telegramId, "request_opened", null);
+  res.json({ ok: true, request: crmDetail(request) });
+});
+
+app.patch("/api/crm/requests/:id/status", requireCrmAuth, (req, res) => {
+  const nextStatus = String(req.body?.status || "");
+  if (!CRM_STATUSES.includes(nextStatus)) return res.status(400).json({ ok: false, error: "invalid_status" });
+  const request = crmRequestById(req.params.id);
+  if (!request) return res.status(404).json({ ok: false, error: "not_found" });
+  if (request.status === nextStatus) return res.json({ ok: true, request: crmDetail(request), unchanged: true });
+  if (!canTransition(request.status, nextStatus)) return res.status(409).json({ ok: false, error: "invalid_transition", currentStatus: request.status });
+  const now = new Date().toISOString();
+  withTransaction(() => {
+    db.prepare("UPDATE booking_requests SET status=?, crm_updated_at=?, updated_at=? WHERE id=?").run(nextStatus, now, now, request.id);
+    appendStatus(request.id, request.status, nextStatus, "master", req.master.telegramId, "Статус изменен в CRM");
+    appendCrmActivity(request.id, "master", req.master.telegramId, "status_changed", { from: request.status, to: nextStatus });
+  });
+  res.json({ ok: true, request: crmDetail(crmRequestById(request.id)) });
+});
+
+app.post("/api/crm/requests/:id/notes", requireCrmAuth, (req, res) => {
+  const text = normalizeShortText(req.body?.text, 2000);
+  if (!text || text.length < 1) return res.status(400).json({ ok: false, error: "note_required" });
+  const request = crmRequestById(req.params.id);
+  if (!request) return res.status(404).json({ ok: false, error: "not_found" });
+  const note = { id: `note_${crypto.randomUUID()}`, requestId: request.id, masterTelegramId: req.master.telegramId, text, createdAt: new Date().toISOString() };
+  withTransaction(() => {
+    db.prepare("INSERT INTO crm_notes (id, request_id, master_telegram_id, text, created_at) VALUES (?, ?, ?, ?, ?)").run(note.id, note.requestId, note.masterTelegramId, note.text, note.createdAt);
+    appendCrmActivity(request.id, "master", req.master.telegramId, "note_added", { noteId: note.id });
+  });
+  res.status(201).json({ ok: true, note });
+});
+
+app.patch("/api/crm/requests/:id/schedule", requireCrmAuth, (req, res) => {
+  const scheduledAt = String(req.body?.scheduledAt || "");
+  const date = new Date(scheduledAt);
+  const durationMinutes = Number(req.body?.durationMinutes);
+  const comment = normalizeShortText(req.body?.comment, 500);
+  if (Number.isNaN(date.getTime()) || !Number.isInteger(durationMinutes) || durationMinutes < 15 || durationMinutes > 1440) return res.status(400).json({ ok: false, error: "invalid_schedule" });
+  const request = crmRequestById(req.params.id);
+  if (!request) return res.status(404).json({ ok: false, error: "not_found" });
+  if (request.status !== "scheduled" && !canTransition(request.status, "scheduled")) return res.status(409).json({ ok: false, error: "invalid_transition", currentStatus: request.status });
+  const now = new Date().toISOString();
+  const nextStatus = "scheduled";
+  withTransaction(() => {
+    db.prepare("UPDATE booking_requests SET scheduled_at=?, duration_minutes=?, schedule_comment=?, status='scheduled', crm_updated_at=?, updated_at=? WHERE id=?").run(date.toISOString(), durationMinutes, comment || null, now, now, request.id);
+    if (nextStatus !== request.status) appendStatus(request.id, request.status, nextStatus, "master", req.master.telegramId, "Назначена дата в CRM");
+    appendCrmActivity(request.id, "master", req.master.telegramId, "schedule_changed", { scheduledAt: date.toISOString(), durationMinutes, comment });
+  });
+  res.json({ ok: true, request: crmDetail(crmRequestById(request.id)) });
+});
+
+app.get("/api/crm/requests/:id/attachments/:attachmentId", requireCrmAuth, (req, res) => {
+  const attachment = db.prepare("SELECT * FROM booking_attachments WHERE id=? AND request_id=?").get(req.params.attachmentId, req.params.id);
+  if (!attachment) return res.status(404).json({ ok: false, error: "not_found" });
+  const file = absoluteAttachmentPath(attachment.file_path);
+  if (!file || !fs.existsSync(file)) return res.status(404).json({ ok: false, error: "file_not_found" });
+  res.setHeader("Content-Type", attachment.mime_type);
+  res.setHeader("Content-Disposition", `inline; filename="${path.basename(file).replace(/[^a-zA-Z0-9._-]/g, "_")}"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  fs.createReadStream(file).pipe(res);
+});
+
+app.post("/api/crm/outbox/:id/retry", requireCrmAuth, async (req, res) => {
+  const outbox = db.prepare("SELECT * FROM notification_outbox WHERE id=?").get(req.params.id);
+  if (!outbox) return res.status(404).json({ ok: false, error: "not_found" });
+  if (!["retry_wait", "pending"].includes(outbox.status)) return res.status(409).json({ ok: false, error: "not_retryable" });
+  db.prepare("UPDATE notification_outbox SET status='pending', next_attempt_at=?, updated_at=? WHERE id=?").run(new Date().toISOString(), new Date().toISOString(), outbox.id);
+  const result = await deliverOutbox(outbox.id);
+  res.json({ ok: result.ok, outboxId: outbox.id, error: result.ok ? undefined : "delivery_failed" });
+});
+
 app.post("/telegram/webhook", async (req, res) => {
+  let telegramUpdateId = null;
   try {
-    if (process.env.WEBHOOK_SECRET) {
-      const secret = req.get("X-Telegram-Bot-Api-Secret-Token");
-      if (secret !== process.env.WEBHOOK_SECRET) {
-        return res.status(403).json({ ok: false, error: "forbidden" });
-      }
+    if (!process.env.WEBHOOK_SECRET && process.env.NODE_ENV !== "test") {
+      return res.status(503).json({ ok: false, error: "webhook_not_configured" });
+    }
+    const secret = req.get("X-Telegram-Bot-Api-Secret-Token");
+    if (process.env.WEBHOOK_SECRET && secret !== process.env.WEBHOOK_SECRET) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
     }
 
     const update = req.body;
     if (typeof update.update_id === "number") {
-      const seen = db.prepare("SELECT id FROM telegram_updates WHERE update_id = ?").get(update.update_id);
-      if (seen) return res.json({ ok: true, duplicate: true });
+      telegramUpdateId = update.update_id;
+      const reserved = db.prepare("INSERT OR IGNORE INTO telegram_updates (id, update_id, event_type, received_at) VALUES (?, ?, 'received', ?)")
+        .run(`upd_${crypto.randomUUID()}`, update.update_id, new Date().toISOString());
+      if (reserved.changes === 0) {
+        const existing = db.prepare("SELECT event_type, received_at FROM telegram_updates WHERE update_id=?").get(update.update_id);
+        if (existing?.event_type === "received") {
+          const leaseAge = Date.now() - new Date(existing.received_at).getTime();
+          if (leaseAge < 5 * 60_000) return res.status(503).json({ ok: false, error: "update_processing" });
+        } else if (existing?.event_type !== "failed") {
+          return res.json({ ok: true, duplicate: true });
+        }
+        db.prepare("UPDATE telegram_updates SET event_type='received', request_id=NULL, received_at=? WHERE update_id=?").run(new Date().toISOString(), update.update_id);
+      }
     }
 
     let requestId = null;
@@ -152,15 +320,11 @@ app.post("/telegram/webhook", async (req, res) => {
       requestId = await handleCallback(update.callback_query);
     }
 
-    if (typeof update.update_id === "number") {
-      db.prepare(`
-        INSERT INTO telegram_updates (id, update_id, request_id, event_type, received_at)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(`upd_${crypto.randomUUID()}`, update.update_id, requestId, eventType, new Date().toISOString());
-    }
+    if (typeof update.update_id === "number") db.prepare("UPDATE telegram_updates SET request_id=?, event_type=? WHERE update_id=?").run(requestId, eventType, update.update_id);
 
     res.json({ ok: true });
   } catch (error) {
+    if (telegramUpdateId !== null) db.prepare("UPDATE telegram_updates SET event_type='failed' WHERE update_id=?").run(telegramUpdateId);
     console.error("telegram_webhook_error", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -188,23 +352,36 @@ app.get("/api/booking/status/:publicCode", (req, res) => {
 });
 
 app.use("/assets", express.static(path.join(rootDir, "assets")));
-app.use("/editor", express.static(path.join(rootDir, "editor")));
-app.use("/uploads", express.static(path.join(rootDir, "uploads")));
+app.use("/crm", express.static(path.join(rootDir, "crm"), { index: "index.html" }));
 
 app.get(["/", "/index.html"], (req, res) => {
   res.sendFile(path.join(rootDir, "index.html"));
 });
 
-for (const filename of ["index_v2.html", "styles.css", "styles_v2.css", "script.js", "script_v2.js"]) {
+for (const filename of ["styles.css", "script.js"]) {
   app.get(`/${filename}`, (req, res) => {
     res.sendFile(path.join(rootDir, filename));
   });
 }
 
-app.listen(port, () => {
-  console.log(`Black Carp server: http://127.0.0.1:${port}`);
-  console.log(`API: http://127.0.0.1:${port}/api/booking/submit`);
-});
+if (require.main === module) {
+  const server = app.listen(port, host, () => {
+    console.log(`Black Carp server: http://${host}:${port}`);
+    console.log(`API: http://${host}:${port}/api/booking/submit`);
+  });
+  setInterval(deliverDueOutbox, 60_000).unref();
+  const shutdown = () => {
+    server.close(() => {
+      db.close();
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
+}
+
+module.exports = { app, db };
 
 async function handleStart(message) {
   const publicCode = message.text.split(/\s+/)[1]?.trim();
@@ -228,14 +405,15 @@ async function handleStart(message) {
   }
 
   const now = new Date().toISOString();
-  const clientId = upsertClient(message.from, message.chat.id, now);
-  db.prepare(`
-    UPDATE booking_requests
-    SET client_id = ?, status = 'client_linked', telegram_opened_at = COALESCE(telegram_opened_at, ?), updated_at = ?
-    WHERE id = ?
-  `).run(clientId, now, now, booking.id);
-
-  appendStatus(booking.id, booking.status, "client_linked", "client", String(message.from.id), "Клиент открыл Telegram-бота");
+  withTransaction(() => {
+    const clientId = upsertClient(message.from, message.chat.id, now);
+    db.prepare(`
+      UPDATE booking_requests
+      SET client_id = ?, telegram_opened_at = COALESCE(telegram_opened_at, ?), updated_at = ?
+      WHERE id = ?
+    `).run(clientId, now, now, booking.id);
+    appendCrmActivity(booking.id, "client", String(message.from.id), "telegram_linked", null);
+  });
 
   await sendTelegramMessage(message.chat.id, [
     "Ваша заявка получена.",
@@ -248,36 +426,6 @@ async function handleStart(message) {
       [{ text: "Заполнить заново", url: `${siteUrl()}#/booking` }]
     ]
   });
-
-  const attachmentCount = db.prepare("SELECT COUNT(*) AS count FROM booking_attachments WHERE request_id = ?")
-    .get(booking.id).count;
-  const notifyResult = await notifyMaster({
-    ...bookingPayloadFromRow(booking),
-    requestId: booking.id,
-    publicCode,
-    attachmentCount,
-    telegramUser: formatTelegramUser(message.from)
-  });
-
-  db.prepare(`
-    UPDATE booking_requests
-    SET master_notified_at = ?, master_notify_error = ?, updated_at = ?
-    WHERE id = ?
-  `).run(
-    notifyResult.ok ? now : null,
-    notifyResult.ok ? null : notifyResult.error,
-    new Date().toISOString(),
-    booking.id
-  );
-
-  appendStatus(
-    booking.id,
-    "client_linked",
-    notifyResult.ok ? "master_notified" : "master_notify_failed",
-    "system",
-    null,
-    notifyResult.ok ? "Мастер уведомлен после перехода клиента в Telegram" : "Не удалось уведомить мастера"
-  );
 
   return booking.id;
 }
@@ -311,21 +459,21 @@ async function handleClientMessage(message) {
     return null;
   }
 
-  await notifyMasterText([
+  const sent = await notifyMasterText([
     `Дополнительный комментарий к заявке #${booking.public_code}`,
     `Клиент: ${formatTelegramUser(message.from)}`,
     "",
     text
   ].join("\n"));
 
-  appendStatus(booking.id, null, "client_comment", "client", String(message.from.id), text);
-  await sendTelegramMessage(message.chat.id, "Комментарий передан мастеру.");
+  appendCrmActivity(booking.id, "client", String(message.from.id), "client_message", { text, delivered: sent.ok });
+  await sendTelegramMessage(message.chat.id, sent.ok ? "Комментарий передан мастеру." : "Комментарий сохранён. Мастер увидит его, когда связь восстановится.");
   return booking.id;
 }
 
 async function handleCallback(callback) {
   const fromId = String(callback.from?.id || "");
-  if (!masterIds().includes(fromId)) {
+  if (!masterTelegramIds().includes(fromId)) {
     await answerCallback(callback.id, "Нет доступа");
     return null;
   }
@@ -334,9 +482,8 @@ async function handleCallback(callback) {
   const nextStatus = {
     review: "in_review",
     details: "need_details",
-    offer: "consultation_offered",
-    close: "closed",
-    spam: "spam"
+    offer: "approved",
+    close: "cancelled"
   }[action];
 
   if (!requestId || !nextStatus) {
@@ -350,9 +497,16 @@ async function handleCallback(callback) {
     return null;
   }
 
-  db.prepare("UPDATE booking_requests SET status = ?, updated_at = ? WHERE id = ?")
-    .run(nextStatus, new Date().toISOString(), requestId);
-  appendStatus(requestId, booking.status, nextStatus, "master", fromId, "Статус изменен кнопкой мастера");
+  if (!canTransition(booking.status, nextStatus)) {
+    await answerCallback(callback.id, "Переход недоступен");
+    return requestId;
+  }
+  withTransaction(() => {
+    db.prepare("UPDATE booking_requests SET status = ?, crm_updated_at=?, updated_at = ? WHERE id = ?")
+      .run(nextStatus, new Date().toISOString(), new Date().toISOString(), requestId);
+    appendStatus(requestId, booking.status, nextStatus, "master", fromId, "Статус изменен кнопкой мастера");
+    appendCrmActivity(requestId, "master", fromId, "status_changed", { from: booking.status, to: nextStatus, source: "telegram_callback" });
+  });
   await answerCallback(callback.id, `Статус: ${nextStatus}`);
   return requestId;
 }
@@ -362,15 +516,17 @@ function saveAttachments(requestId, attachments) {
 
   const requestDir = path.join(uploadsDir, requestId);
   fs.mkdirSync(requestDir, { recursive: true });
+  fs.chmodSync(requestDir, 0o700);
 
   return attachments.slice(0, 4).flatMap((attachment, index) => {
     const parsed = parseDataUrl(attachment.dataUrl);
-    if (!parsed) return [];
+    if (!parsed || parsed.buffer.length > maxAttachmentBytes()) return [];
 
     const kind = attachment.kind === "sketch" ? "sketch" : "reference";
     const filename = `${kind}-${index + 1}.${mimeExtension(parsed.mimeType)}`;
     const absolutePath = path.join(requestDir, filename);
     fs.writeFileSync(absolutePath, parsed.buffer);
+    fs.chmodSync(absolutePath, 0o600);
 
     return [{
       id: `att_${crypto.randomUUID()}`,
@@ -382,26 +538,18 @@ function saveAttachments(requestId, attachments) {
   });
 }
 
-async function notifyMaster(payload) {
-  if (!process.env.BOT_TOKEN || !masterIds().length) {
+async function notifyMaster(payload, chatId) {
+  if (!process.env.BOT_TOKEN || !chatId) {
     return { ok: false, error: "bot_not_configured" };
   }
 
   const replyMarkup = {
     inline_keyboard: [
-      [
-        { text: "Взять в работу", callback_data: `${payload.requestId}:review` },
-        { text: "Уточнить", callback_data: `${payload.requestId}:details` }
-      ],
-      [{ text: "Предложить консультацию", callback_data: `${payload.requestId}:offer` }],
-      [
-        { text: "Закрыть", callback_data: `${payload.requestId}:close` },
-        { text: "Спам", callback_data: `${payload.requestId}:spam` }
-      ]
+      [{ text: "Открыть заявку", web_app: { url: `${crmWebAppUrl()}?request=${encodeURIComponent(payload.publicCode)}` } }]
     ]
   };
 
-  return notifyMasterText(masterCardText(payload), replyMarkup);
+  return sendTelegramMessage(chatId, masterCardText(payload), replyMarkup);
 }
 
 async function notifyMasterText(text, replyMarkup) {
@@ -410,7 +558,7 @@ async function notifyMasterText(text, replyMarkup) {
   }
 
   const results = await Promise.all(masterIds().map((chatId) => sendTelegramMessage(chatId, text, replyMarkup)));
-  return results.find((item) => !item.ok) || { ok: true };
+  return results.some((item) => item.ok) ? { ok: true } : (results[0] || { ok: false, error: "delivery_failed" });
 }
 
 async function sendTelegramMessage(chatId, text, replyMarkup) {
@@ -431,7 +579,11 @@ async function sendTelegramMessage(chatId, text, replyMarkup) {
 
 async function answerCallback(callbackQueryId, text) {
   if (!process.env.BOT_TOKEN || !callbackQueryId) return;
-  await telegramRequest("answerCallbackQuery", { callback_query_id: callbackQueryId, text });
+  try {
+    await telegramRequest("answerCallbackQuery", { callback_query_id: callbackQueryId, text });
+  } catch (error) {
+    console.error("telegram_callback_answer_error", String(error?.message || error));
+  }
 }
 
 function upsertClient(user, chatId, now) {
@@ -483,14 +635,24 @@ function appendStatus(requestId, fromStatus, toStatus, actorType, actorId, note)
 
 function validateBookingPayload(payload) {
   if (!payload || typeof payload !== "object") return "invalid_payload";
-  if (!payload.consentAt) return "consent_required";
+  if (!payload.consentAt || Number.isNaN(new Date(payload.consentAt).getTime())) return "consent_required";
   if (!["yes", "no"].includes(payload.firstTattoo)) return "invalid_first_tattoo";
   if (!["yes", "no", null, undefined].includes(payload.beenToMaster)) return "invalid_been_to_master";
-  if (!payload.bodyZone || !payload.bodySubzone) return "body_zone_required";
-  if (payload.sizeCm && !Number(payload.sizeCm)) return "invalid_size";
-  if (String(payload.ideaText || "").length > 2000) return "idea_too_long";
-  if ((payload.attachments || []).length > 4) return "too_many_attachments";
-  return null;
+  if (typeof payload.bodyZone !== "string" || typeof payload.bodySubzone !== "string" || !normalizeShortText(payload.bodyZone, 81) || !normalizeShortText(payload.bodySubzone, 81)) return "body_zone_required";
+  if (payload.bodyZone.trim().length > 80 || payload.bodySubzone.trim().length > 80) return "body_zone_too_long";
+  if (payload.bodyView && !["front", "back"].includes(payload.bodyView)) return "invalid_body_view";
+  if (payload.sizePreset && !["XS", "S", "M", "L", "XL"].includes(payload.sizePreset)) return "invalid_size_preset";
+  if (payload.sizeCm !== null && payload.sizeCm !== undefined && payload.sizeCm !== "" && (!Number.isInteger(Number(payload.sizeCm)) || Number(payload.sizeCm) < 1 || Number(payload.sizeCm) > 100)) return "invalid_size";
+  if (payload.ideaText !== undefined && (typeof payload.ideaText !== "string" || payload.ideaText.length > 2000)) return "idea_too_long";
+  if (payload.sketchComment !== undefined && (typeof payload.sketchComment !== "string" || payload.sketchComment.length > 500)) return "invalid_sketch_comment";
+  if (!Array.isArray(payload.attachments)) return "invalid_attachments";
+  if (payload.attachments.length > 4) return "too_many_attachments";
+  const attachmentTooLarge = payload.attachments.some((attachment) => {
+    const parsed = parseDataUrl(attachment?.dataUrl);
+    return !parsed || parsed.buffer.length > maxAttachmentBytes();
+  });
+  if (attachmentTooLarge) return "invalid_attachment";
+  return validateContact(payload);
 }
 
 function createPublicCode() {
@@ -514,8 +676,10 @@ function masterCardText(payload) {
   return [
     `Новая заявка Black Carp #${payload.publicCode}`,
     "",
-    "Статус: клиент перешел в Telegram после анкеты",
-    payload.telegramUser ? `Клиент: ${payload.telegramUser}` : null,
+    "Статус: новая заявка с сайта",
+    payload.clientName ? `Клиент: ${payload.clientName}` : null,
+    payload.contactValue ? `Контакт: ${payload.contactValue}` : null,
+    payload.telegramUser ? `Telegram: ${payload.telegramUser}` : null,
     "",
     `Опыт: ${experience}`,
     `У мастера ранее: ${master}`,
@@ -588,7 +752,7 @@ function schemaSql() {
       public_code TEXT NOT NULL UNIQUE,
       idempotency_key TEXT UNIQUE,
       client_id TEXT REFERENCES clients(id),
-      status TEXT NOT NULL DEFAULT 'submitted',
+      status TEXT NOT NULL DEFAULT 'new',
       source TEXT NOT NULL DEFAULT 'website',
       first_tattoo TEXT NOT NULL,
       been_to_master TEXT,
@@ -671,11 +835,21 @@ async function telegramRequest(method, payload) {
     return telegramRequestViaIp(method, body, apiIp);
   }
 
-  const response = await fetch(`${telegramApiBase()}/bot${process.env.BOT_TOKEN}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Number(process.env.TELEGRAM_TIMEOUT_MS || 15000));
+  let response;
+  try {
+    response = await fetch(`${telegramApiBase()}/bot${process.env.BOT_TOKEN}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      signal: controller.signal
+    });
+  } catch (error) {
+    throw new Error(error?.name === "AbortError" ? "telegram_timeout" : String(error?.message || error));
+  } finally {
+    clearTimeout(timer);
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.ok === false) {
     throw new Error(data.description || `telegram_${response.status}`);
@@ -736,19 +910,53 @@ function masterIds() {
     .filter(Boolean);
 }
 
+function requiredConfiguration() {
+  const missing = ["BOT_TOKEN", "WEBHOOK_SECRET", "SITE_URL", "ALLOWED_ORIGINS"]
+    .filter((key) => !String(process.env[key] || "").trim());
+  if (!masterIds().length) missing.push("MASTER_CHAT_IDS");
+  if (!masterTelegramIds().length) missing.push("MASTER_TELEGRAM_IDS");
+  return missing;
+}
+
+function bookingRateLimit(req, res, next) {
+  const now = Date.now();
+  const windowMs = Math.max(60_000, Number(process.env.BOOKING_RATE_WINDOW_MS || 15 * 60_000));
+  const limit = Math.max(1, Number(process.env.BOOKING_RATE_LIMIT || 8));
+  const key = req.ip || req.socket?.remoteAddress || "unknown";
+  const bucket = bookingRateBuckets.get(key);
+  const current = !bucket || bucket.resetAt <= now ? { count: 0, resetAt: now + windowMs } : bucket;
+  current.count += 1;
+  bookingRateBuckets.set(key, current);
+  res.setHeader("RateLimit-Limit", String(limit));
+  res.setHeader("RateLimit-Remaining", String(Math.max(0, limit - current.count)));
+  res.setHeader("RateLimit-Reset", String(Math.ceil(current.resetAt / 1000)));
+  if (bookingRateBuckets.size > 5000) {
+    for (const [itemKey, item] of bookingRateBuckets) if (item.resetAt <= now) bookingRateBuckets.delete(itemKey);
+  }
+  if (current.count > limit) return res.status(429).json({ ok: false, error: "rate_limited" });
+  next();
+}
+
 function cors(req, res, next) {
   const allowed = String(process.env.ALLOWED_ORIGINS || "")
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
   const origin = req.get("origin");
-  if (!origin || allowed.length === 0 || allowed.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin || "*");
-  }
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Telegram-Bot-Api-Secret-Token");
+  if (origin && (allowed.includes(origin) || (allowed.length === 0 && process.env.NODE_ENV !== "production"))) res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Telegram-Bot-Api-Secret-Token,X-Telegram-Init-Data,X-Test-Master-Id");
   res.setHeader("Vary", "Origin");
   if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+}
+
+function securityHeaders(req, res, next) {
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; connect-src 'self'; frame-src https://yandex.ru; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   next();
 }
 
@@ -797,4 +1005,361 @@ function loadEnvFile(filePath) {
       process.env[key] = value;
     }
   }
+}
+
+function runMigrations(database) {
+  database.exec("BEGIN IMMEDIATE");
+  try {
+  const columns = new Set(database.prepare("PRAGMA table_info(booking_requests)").all().map((row) => row.name));
+  const additions = [
+    ["client_name", "TEXT"],
+    ["contact_type", "TEXT"],
+    ["contact_value", "TEXT"],
+    ["contact_comment", "TEXT"],
+    ["scheduled_at", "TEXT"],
+    ["duration_minutes", "INTEGER"],
+    ["schedule_comment", "TEXT"],
+    ["crm_updated_at", "TEXT"]
+  ];
+  for (const [name, definition] of additions) {
+    if (!columns.has(name)) database.exec(`ALTER TABLE booking_requests ADD COLUMN ${name} ${definition}`);
+  }
+  database.exec(`
+    UPDATE booking_requests SET status = CASE status
+      WHEN 'submitted' THEN 'new'
+      WHEN 'awaiting_client_start' THEN 'new'
+      WHEN 'client_linked' THEN 'new'
+      WHEN 'master_notified' THEN 'new'
+      WHEN 'master_notify_failed' THEN 'new'
+      WHEN 'consultation_offered' THEN 'approved'
+      WHEN 'consultation_scheduled' THEN 'scheduled'
+      WHEN 'closed' THEN 'done'
+      WHEN 'spam' THEN 'cancelled'
+      ELSE status END
+    WHERE status IN ('submitted','awaiting_client_start','client_linked','master_notified','master_notify_failed','consultation_offered','consultation_scheduled','closed','spam');
+    UPDATE booking_requests SET crm_updated_at = COALESCE(crm_updated_at, updated_at, created_at);
+  `);
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS crm_notes (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL REFERENCES booking_requests(id) ON DELETE CASCADE,
+      master_telegram_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS crm_activity (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL REFERENCES booking_requests(id) ON DELETE CASCADE,
+      actor_type TEXT NOT NULL,
+      actor_id TEXT,
+      event_type TEXT NOT NULL,
+      payload_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS notification_outbox (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL REFERENCES booking_requests(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      recipient_chat_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT NOT NULL,
+      last_error TEXT,
+      sent_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_crm_notes_request_id ON crm_notes(request_id);
+    CREATE INDEX IF NOT EXISTS idx_crm_activity_request_id ON crm_activity(request_id);
+    CREATE INDEX IF NOT EXISTS idx_notification_outbox_pending ON notification_outbox(status, next_attempt_at);
+    UPDATE notification_outbox SET status='retry_wait', next_attempt_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE status='sending';
+  `);
+  const outboxColumns = new Set(database.prepare("PRAGMA table_info(notification_outbox)").all().map((row) => row.name));
+  if (!outboxColumns.has("recipient_chat_id")) database.exec("ALTER TABLE notification_outbox ADD COLUMN recipient_chat_id TEXT");
+  const defaultRecipient = masterIds()[0] || null;
+  if (defaultRecipient) database.prepare("UPDATE notification_outbox SET recipient_chat_id=? WHERE recipient_chat_id IS NULL").run(defaultRecipient);
+    database.exec("PRAGMA user_version = 1; COMMIT");
+  } catch (error) {
+    try { database.exec("ROLLBACK"); } catch {}
+    throw error;
+  }
+}
+
+function backupDatabaseBeforeMigration(database, existed) {
+  if (!existed || process.env.NODE_ENV === "test") return;
+  const version = database.prepare("PRAGMA user_version").get().user_version;
+  if (version >= 1) return;
+  const backupDir = path.join(path.dirname(dbPath), "backups");
+  fs.mkdirSync(backupDir, { recursive: true });
+  const backupPath = path.join(backupDir, `black-carp-pre-v1-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`);
+  database.exec(`VACUUM INTO '${backupPath.replace(/'/g, "''")}'`);
+}
+
+function normalizeShortText(value, maxLength = 2000) {
+  return String(value || "").trim().slice(0, maxLength);
+}
+
+function normalizeContactName(value) {
+  return normalizeShortText(value, 80);
+}
+
+function normalizeContactValue(value, type) {
+  const normalized = normalizeShortText(value, 120);
+  if (type === "telegram") return `@${normalized.replace(/^@+/, "")}`;
+  return normalized;
+}
+
+function validateContact(payload) {
+  const name = normalizeContactName(payload.clientName);
+  const type = String(payload.contactType || "");
+  const value = normalizeContactValue(payload.contactValue, type);
+  if (name.length < 2) return "client_name_required";
+  if (!["telegram", "phone", "other"].includes(type)) return "invalid_contact_type";
+  if (value.length < 3) return "contact_required";
+  if (type === "telegram" && !/^@[A-Za-z0-9_]{5,32}$/.test(value)) return "invalid_telegram_contact";
+  if (type === "phone") {
+    const digits = value.match(/\d/g) || [];
+    if (!/^[+\d\s()-]+$/.test(value) || digits.length < 7 || digits.length > 15) return "invalid_phone_contact";
+  }
+  return null;
+}
+
+function masterTelegramIds() {
+  return String(process.env.MASTER_TELEGRAM_IDS || process.env.MASTER_CHAT_IDS || process.env.MASTER_CHAT_ID || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function crmWebAppUrl() {
+  return String(process.env.CRM_WEBAPP_URL || `${siteUrl()}/crm`).replace(/\/$/, "");
+}
+
+function requireCrmAuth(req, res, next) {
+  try {
+    const testMasterId = req.get("X-Test-Master-Id");
+    let master;
+    if (process.env.NODE_ENV === "test" && testMasterId && masterTelegramIds().includes(String(testMasterId))) {
+      master = { telegramId: String(testMasterId), name: "Test master" };
+    } else {
+      master = verifyTelegramInitData(req.get("X-Telegram-Init-Data"));
+    }
+    if (!master || !masterTelegramIds().includes(String(master.telegramId))) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
+    req.master = master;
+    next();
+  } catch (error) {
+    return res.status(401).json({ ok: false, error: "invalid_init_data" });
+  }
+}
+
+function verifyTelegramInitData(initData) {
+  if (!initData || !process.env.BOT_TOKEN) throw new Error("missing_init_data");
+  const params = new URLSearchParams(initData);
+  const providedHash = params.get("hash");
+  const authDate = Number(params.get("auth_date"));
+  const userJson = params.get("user");
+  if (!providedHash || !userJson || !Number.isFinite(authDate)) throw new Error("invalid_init_data");
+  if (Math.abs(Math.floor(Date.now() / 1000) - authDate) > 24 * 60 * 60) throw new Error("stale_init_data");
+  params.delete("hash");
+  const dataCheckString = [...params.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  const secretKey = crypto.createHmac("sha256", "WebAppData").update(process.env.BOT_TOKEN).digest();
+  const expectedHash = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
+  const expected = Buffer.from(expectedHash, "hex");
+  const actual = Buffer.from(providedHash, "hex");
+  if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) throw new Error("invalid_signature");
+  const user = JSON.parse(userJson);
+  if (!user?.id) throw new Error("invalid_user");
+  return { telegramId: String(user.id), name: [user.first_name, user.last_name].filter(Boolean).join(" ") || user.username || "Мастер" };
+}
+
+function crmRequestById(id) {
+  return db.prepare("SELECT * FROM booking_requests WHERE id = ? OR public_code = ?").get(id, id);
+}
+
+function crmListItem(row) {
+  return {
+    id: row.id,
+    publicCode: row.public_code,
+    status: row.status,
+    clientName: row.client_name || "Без имени",
+    contactValue: row.contact_value || "Контакт не указан",
+    bodyZone: row.body_zone,
+    bodySubzone: row.body_subzone,
+    sizeCm: row.size_cm,
+    hasSketch: Boolean(row.has_sketch),
+    hasAttachments: Boolean(row.has_attachments),
+    createdAt: row.created_at
+  };
+}
+
+function crmDetail(row) {
+  const attachments = db.prepare("SELECT id, kind, mime_type, size_bytes, created_at FROM booking_attachments WHERE request_id = ? ORDER BY created_at").all(row.id)
+    .map((item) => ({ id: item.id, kind: item.kind, mimeType: item.mime_type, sizeBytes: item.size_bytes, createdAt: item.created_at, url: `/api/crm/requests/${row.id}/attachments/${item.id}` }));
+  const notes = db.prepare("SELECT id, master_telegram_id, text, created_at FROM crm_notes WHERE request_id = ? ORDER BY created_at DESC").all(row.id)
+    .map((item) => ({ id: item.id, masterTelegramId: item.master_telegram_id, text: item.text, createdAt: item.created_at }));
+  const activity = db.prepare("SELECT id, actor_type, actor_id, event_type, payload_json, created_at FROM crm_activity WHERE request_id = ? ORDER BY created_at DESC").all(row.id)
+    .map((item) => ({ id: item.id, actorType: item.actor_type, actorId: item.actor_id, eventType: item.event_type, payload: parseJson(item.payload_json), createdAt: item.created_at }));
+  return {
+    id: row.id,
+    publicCode: row.public_code,
+    status: row.status,
+    clientName: row.client_name || "Без имени",
+    contactType: row.contact_type || null,
+    contactValue: row.contact_value || null,
+    contactComment: row.contact_comment || null,
+    firstTattoo: row.first_tattoo,
+    beenToMaster: row.been_to_master,
+    hasSketch: Boolean(row.has_sketch),
+    sketchComment: row.sketch_comment,
+    bodyZone: row.body_zone,
+    bodySubzone: row.body_subzone,
+    bodyView: row.body_view,
+    sizePreset: row.size_preset,
+    sizeCm: row.size_cm,
+    ideaText: row.idea_text,
+    priceEstimate: row.price_estimate,
+    scheduledAt: row.scheduled_at,
+    durationMinutes: row.duration_minutes,
+    scheduleComment: row.schedule_comment,
+    createdAt: row.created_at,
+    updatedAt: row.crm_updated_at || row.updated_at,
+    attachments,
+    notes,
+    activity
+  };
+}
+
+function appendCrmActivity(requestId, actorType, actorId, eventType, payload) {
+  db.prepare("INSERT INTO crm_activity (id, request_id, actor_type, actor_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(`act_${crypto.randomUUID()}`, requestId, actorType, actorId || null, eventType, payload ? JSON.stringify(payload) : null, new Date().toISOString());
+}
+
+function withTransaction(callback) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = callback();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw error;
+  }
+}
+
+function canTransition(from, to) {
+  return (CRM_TRANSITIONS[from] || []).includes(to);
+}
+
+function validDateFilter(value) {
+  if (!value) return null;
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function encodeCursor(value) {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function decodeCursor(value) {
+  try {
+    const parsed = JSON.parse(Buffer.from(String(value), "base64url").toString("utf8"));
+    return parsed?.createdAt && parsed?.id ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function escapeLike(value) {
+  return String(value).replace(/[\\%_]/g, "\\$&");
+}
+
+function absoluteAttachmentPath(relativePath) {
+  const absolute = path.resolve(rootDir, String(relativePath || ""));
+  const root = path.resolve(uploadsDir) + path.sep;
+  return absolute.startsWith(root) ? absolute : null;
+}
+
+function cleanupRequestFiles(requestId) {
+  const target = path.join(uploadsDir, requestId);
+  fs.rmSync(target, { recursive: true, force: true });
+}
+
+function hardenRuntimePermissions() {
+  for (const directory of [dataDir, uploadsDir]) {
+    fs.chmodSync(directory, 0o700);
+    hardenTree(directory);
+  }
+  for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+    if (fs.existsSync(file)) fs.chmodSync(file, 0o600);
+  }
+}
+
+function hardenTree(directory) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes:true })) {
+    const target = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      fs.chmodSync(target, 0o700);
+      hardenTree(target);
+    } else if (entry.isFile()) {
+      fs.chmodSync(target, 0o600);
+    }
+  }
+}
+
+function maxAttachmentBytes() {
+  return Math.max(256 * 1024, Math.min(Number(process.env.MAX_ATTACHMENT_BYTES || 5 * 1024 * 1024), 10 * 1024 * 1024));
+}
+
+function enqueueMasterNotification(requestId, now) {
+  const recipients = masterIds().length ? masterIds() : [null];
+  const insert = db.prepare("INSERT INTO notification_outbox (id, request_id, kind, recipient_chat_id, status, attempts, next_attempt_at, created_at, updated_at) VALUES (?, ?, 'master_new_request', ?, 'pending', 0, ?, ?, ?)");
+  for (const recipient of recipients) insert.run(`out_${crypto.randomUUID()}`, requestId, recipient, now, now, now);
+}
+
+async function deliverPendingNotification(requestId) {
+  const outboxes = db.prepare("SELECT id FROM notification_outbox WHERE request_id = ? AND status IN ('pending','retry_wait') ORDER BY created_at ASC").all(requestId);
+  if (!outboxes.length) return { ok: true };
+  const results = await Promise.all(outboxes.map((outbox) => deliverOutbox(outbox.id)));
+  return results.find((item) => item.ok) || results[0];
+}
+
+async function deliverDueOutbox() {
+  const due = db.prepare("SELECT id FROM notification_outbox WHERE status IN ('pending','retry_wait') AND next_attempt_at <= ? ORDER BY next_attempt_at ASC LIMIT 20")
+    .all(new Date().toISOString());
+  await Promise.all(due.map((item) => deliverOutbox(item.id)));
+}
+
+async function deliverOutbox(outboxId) {
+  const outbox = db.prepare("SELECT * FROM notification_outbox WHERE id = ?").get(outboxId);
+  if (!outbox) return { ok: false };
+  if (!["pending", "retry_wait"].includes(outbox.status)) return { ok: outbox.status === "sent", error: "not_pending" };
+  const request = crmRequestById(outbox.request_id);
+  if (!request) return { ok: false };
+  const now = new Date().toISOString();
+  const claimed = db.prepare("UPDATE notification_outbox SET status='sending', attempts=attempts+1, updated_at=? WHERE id=? AND status IN ('pending','retry_wait')").run(now, outbox.id);
+  if (claimed.changes === 0) return { ok: false, error: "already_claimed" };
+  const attachmentCount = db.prepare("SELECT COUNT(*) AS count FROM booking_attachments WHERE request_id=?").get(request.id).count;
+  const result = await notifyMaster({ ...bookingPayloadFromRow(request), requestId: request.id, publicCode: request.public_code, clientName: request.client_name, contactValue: request.contact_value, attachmentCount }, outbox.recipient_chat_id);
+  if (result.ok) {
+    withTransaction(() => {
+      db.prepare("UPDATE notification_outbox SET status='sent', sent_at=?, last_error=NULL, updated_at=? WHERE id=?").run(now, now, outbox.id);
+      db.prepare("UPDATE booking_requests SET master_notified_at=?, master_notify_error=NULL, updated_at=? WHERE id=?").run(now, now, request.id);
+      appendCrmActivity(request.id, "system", null, "master_notified", { outboxId: outbox.id });
+    });
+    return { ok: true };
+  }
+  const attempts = Number(outbox.attempts || 0) + 1;
+  const delayMinutes = Math.min(60, 2 ** Math.min(attempts, 6));
+  const nextAttempt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();
+  withTransaction(() => {
+    db.prepare("UPDATE notification_outbox SET status='retry_wait', next_attempt_at=?, last_error=?, updated_at=? WHERE id=?").run(nextAttempt, String(result.error || "delivery_failed").slice(0, 500), now, outbox.id);
+    db.prepare("UPDATE booking_requests SET master_notify_error=?, updated_at=? WHERE id=?").run(String(result.error || "delivery_failed").slice(0, 500), now, request.id);
+    appendCrmActivity(request.id, "system", null, "master_notify_failed", { outboxId: outbox.id, error: result.error || "delivery_failed" });
+  });
+  return { ok: false, error: result.error };
 }

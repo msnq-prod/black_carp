@@ -6,7 +6,7 @@
     <meta name="black-carp-api-base" content="">
     <meta name="black-carp-bot-username" content="blackcarp_bot">
     <title>Black Carp — авторская графика</title>
-    <link rel="preload" as="image" href="assets/media/hero-forearm.png">
+    <link rel="preload" as="image" href="assets/media/work-hero-01.jpg">
     <link rel="stylesheet" href="styles.css?v=booking-20260704a">
   </head>
   <body>
@@ -15,7 +15,7 @@
     <main class="app-shell" id="app">
       <section class="view view-home is-active" data-view="home" aria-label="Главная">
         <section class="hero scene scene-full">
-          <video class="hero__media" autoplay="" muted="" loop="" playsinline="" preload="auto" poster="assets/media/hero-forearm.png" aria-label="Видео с графической татуировкой">
+          <video class="hero__media" autoplay="" muted="" loop="" playsinline="" preload="auto" poster="assets/media/work-hero-01.jpg" aria-label="Видео с графической татуировкой">
             <source src="assets/media/hero-video.mp4" type="video/mp4">
           </video>
           <div class="scene-vignette" aria-hidden="true"></div>
@@ -39,7 +39,7 @@
         </section>
 
         <section class="featured-work">
-          <img src="assets/media/work-shoulder.png" alt="Графическая работа на спине">
+          <img src="assets/media/work-hero-02.jpg" alt="Графическая работа">
           <div class="work-caption">
             <h3>Авторская графика без готовых шаблонов.</h3>
             <p>Эскиз собирается под масштаб, место и движение тела.</p>
@@ -47,7 +47,7 @@
         </section>
 
         <section class="featured-work">
-          <img src="assets/media/hero-forearm.png" alt="Графическая татуировка на предплечье">
+          <img src="assets/media/work-hero-01.jpg" alt="Графическая татуировка на предплечье">
           <div class="work-caption">
             <h3>Авторские работы от 7 000 ₽</h3>
             <p>Финальная стоимость зависит от идеи, масштаба и сложности проекта.</p>
@@ -77,7 +77,7 @@
                 <path d="m13 6 6 6-6 6"></path>
               </svg>
             </a>
-            <button class="line-cta" type="button" data-open-route-gallery onclick="document.querySelector('[data-route-modal]').hidden = false; document.querySelector('[data-route-modal]').setAttribute('aria-hidden', 'false'); document.body.style.overflow='hidden';">
+            <button class="line-cta" type="button" data-open-route-gallery>
               <span>Показать проход</span>
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M5 12h13"></path>
@@ -127,7 +127,7 @@
       <section class="view view-works" data-view="works" aria-label="Работы">
         <div class="works-feed" id="worksFeed">
       <article class="work-slide">
-        <img src="assets/media/hero-forearm.png" alt="Графическая татуировка на предплечье" loading="eager">
+        <img src="assets/media/work-hero-01.jpg" alt="Графическая татуировка на предплечье" loading="eager">
         <div class="slide-index">01 / 08</div>
         <div class="slide-caption">
           <h2>Nocturne I</h2>
@@ -136,7 +136,7 @@
       </article>
 
       <article class="work-slide">
-        <img src="assets/media/work-shoulder.png" alt="Графическая татуировка на спине" loading="lazy">
+        <img src="assets/media/work-hero-02.jpg" alt="Графическая татуировка на спине" loading="lazy">
         <div class="slide-index">02 / 08</div>
         <div class="slide-caption">
           <h2>Arc Study</h2>
@@ -145,7 +145,7 @@
       </article>
 
       <article class="work-slide">
-        <img src="assets/media/work-detail.png" alt="Макро-фрагмент графической татуировки" loading="lazy">
+        <img src="assets/media/work-hero-03.jpg" alt="Макро-фрагмент графической татуировки" loading="lazy">
         <div class="slide-index">03 / 08</div>
         <div class="slide-caption">
           <h2>Quiet Line</h2>
@@ -163,7 +163,7 @@
       </article>
 
       <article class="work-slide">
-        <img src="assets/media/hero-forearm.png" alt="Графическая татуировка на предплечье" loading="lazy">
+        <img src="assets/media/work-hero-01.jpg" alt="Графическая татуировка на предплечье" loading="lazy">
         <div class="slide-index">05 / 08</div>
         <div class="slide-caption">
           <h2>Axis</h2>
@@ -172,7 +172,7 @@
       </article>
 
       <article class="work-slide">
-        <img src="assets/media/work-shoulder.png" alt="Графическая татуировка на плече" loading="lazy">
+        <img src="assets/media/work-hero-02.jpg" alt="Графическая татуировка на плече" loading="lazy">
         <div class="slide-index">06 / 08</div>
         <div class="slide-caption">
           <h2>Shoulder Field</h2>
@@ -181,7 +181,7 @@
       </article>
 
       <article class="work-slide">
-        <img src="assets/media/work-detail.png" alt="Деталь татуировки на коже" loading="lazy">
+        <img src="assets/media/work-hero-03.jpg" alt="Деталь татуировки на коже" loading="lazy">
         <div class="slide-index">07 / 08</div>
         <div class="slide-caption">
           <h2>Skin Map</h2>
@@ -206,7 +206,7 @@
       <section class="view view-booking" data-view="booking" aria-label="Запись">
         <div class="booking-wizard" id="bookingWizard">
           <div class="wizard-header">
-            <div class="wizard-progress">
+            <div class="wizard-progress" role="progressbar" aria-label="Прогресс анкеты" aria-valuemin="1" aria-valuemax="6" aria-valuenow="1">
               <div class="wizard-progress-bar" id="wizardProgress" style="width: 14%;"></div>
             </div>
             <div class="wizard-top-nav">
@@ -220,7 +220,7 @@
             </div>
           </div>
 
-          <div class="wizard-slides" id="wizardSlides">
+          <div class="wizard-slides" id="wizardSlides" aria-live="polite">
             <!-- Шаг 2: Первая татуировка -->
             <div class="wizard-slide is-active" data-step="2">
               <div class="wizard-slide-content">
@@ -278,14 +278,14 @@
                 <h3 class="wizard-question-title">Загрузите ваш эскиз</h3>
                 <div class="file-uploader" id="sketchUploader">
                   <input class="visually-hidden" type="file" id="sketchInput" accept="image/png,image/jpeg,image/webp">
-                  <div class="uploader-zone">
+                  <button class="uploader-zone" type="button">
                     <svg viewBox="0 0 24 24" class="uploader-icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"></path></svg>
                     <span>Выбрать изображение</span>
-                    <p class="file-limits">JPG, PNG до 10 МБ</p>
-                  </div>
+                    <p class="file-limits">JPG, PNG до 5 МБ</p>
+                  </button>
                   <div class="uploader-preview" style="display: none;">
                     <img id="sketchPreviewImg" src="" alt="Превью эскиза">
-                    <button type="button" class="btn-remove-file" id="btnRemoveSketch">
+                    <button type="button" class="btn-remove-file" id="btnRemoveSketch" aria-label="Удалить эскиз">
                       <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"></path></svg>
                     </button>
                   </div>
@@ -370,11 +370,11 @@
                 <h4 class="sub-title">Референсы</h4>
                 <div class="file-uploader" id="refUploader">
                   <input class="visually-hidden" type="file" id="refInput" accept="image/png,image/jpeg,image/webp" multiple>
-                  <div class="uploader-zone">
+                  <button class="uploader-zone" type="button">
                     <svg viewBox="0 0 24 24" class="uploader-icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"></path></svg>
                     <span>Загрузить референсы</span>
                     <p class="file-limits">До 3 изображений</p>
-                  </div>
+                  </button>
                   <div class="uploader-previews-container" id="refPreviewsContainer" style="display: none;">
                     <!-- Превью загруженных референсов -->
                   </div>
@@ -390,6 +390,7 @@
             <!-- Шаг 8: Итоги и отправка -->
             <div class="wizard-slide" data-step="8">
               <div class="wizard-slide-content confirmation-slide">
+                <div id="bookingConfirmationForm">
                 <h3 class="wizard-question-title">Анкета заполнена</h3>
 
                 <div class="summary-card" id="wizardSummaryCard">
@@ -402,6 +403,13 @@
                   <p class="estimate-note">Итоговая цена фиксируется мастером после обсуждения эскиза.</p>
                 </div>
 
+                <div class="booking-contact" aria-label="Контакт для связи">
+                  <label>Имя<input id="bookingClientName" type="text" maxlength="80" autocomplete="name" placeholder="Как к вам обращаться"></label>
+                  <label>Канал связи<select id="bookingContactType"><option value="telegram">Telegram</option><option value="phone">Телефон</option><option value="other">Другой</option></select></label>
+                  <label>Контакт<input id="bookingContactValue" type="text" maxlength="120" autocomplete="tel" placeholder="@username или номер телефона"></label>
+                  <label>Комментарий<input id="bookingContactComment" type="text" maxlength="500" placeholder="Удобное время для связи"></label>
+                </div>
+
                 <label class="booking-consent">
                   <input type="checkbox" id="bookingConsent">
                   <span>Согласен(на) на обработку данных анкеты и передачу заявки мастеру в Telegram.</span>
@@ -409,10 +417,17 @@
 
                 <div class="action-buttons">
                   <button type="button" class="line-cta line-cta--center" id="wizardSubmitBtn">
-                    <span>Перейти в Telegram</span>
+                    <span>Отправить заявку</span>
                     <svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"></path></svg>
                   </button>
                   <button type="button" class="btn-restart" id="wizardRestartBtn">Заполнить заново</button>
+                </div>
+                </div>
+                <div class="booking-success" id="bookingSuccess" hidden tabindex="-1">
+                  <p class="screen-label">ЗАЯВКА <span id="bookingSuccessCode"></span></p>
+                  <h3>Заявка отправлена</h3>
+                  <p>Мастер получил вашу анкету и свяжется по указанному контакту.</p>
+                  <button type="button" class="line-cta line-cta--center" id="wizardSuccessRestartBtn"><span>Отправить ещё одну заявку</span></button>
                 </div>
               </div>
             </div>
@@ -430,43 +445,43 @@
       <section class="view view-profile" data-view="profile" aria-label="Профиль">
         <section class="profile-screen">
           <p class="screen-label">ПРОФИЛЬ</p>
-          <img src="assets/media/work-detail.png" alt="Деталь графической татуировки">
+          <img src="assets/media/work-hero-03.jpg" alt="Деталь графической татуировки">
           <div class="profile-login">
-            <h2>Войти через Telegram</h2>
-            <p>После входа здесь появятся статус обращения и дата консультации.</p>
-            <a class="line-cta line-cta--center" href="https://t.me/blackcarp_bot">
-              <span>Открыть Telegram</span>
+            <h2 id="profileHeading">Последняя заявка</h2>
+            <p id="profileMessage">Здесь отображается статус заявки, отправленной с этого устройства.</p>
+            <button class="line-cta line-cta--center" type="button" data-open-view="booking">
+              <span>Создать новую заявку</span>
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M5 12h13"></path>
                 <path d="m13 6 6 6-6 6"></path>
               </svg>
-            </a>
+            </button>
           </div>
-          <dl class="status-list">
+          <dl class="status-list" id="profileStatus">
             <div>
-              <dt>Имя</dt>
-              <dd>Будет получено из Telegram</dd>
+              <dt>Номер</dt>
+              <dd id="profileCode">—</dd>
             </div>
             <div>
               <dt>Статус</dt>
-              <dd>Обращение не создано</dd>
+              <dd id="profileStatusValue">Заявка не отправлена</dd>
             </div>
             <div>
-              <dt>Консультация</dt>
-              <dd>Дата не назначена</dd>
+              <dt>Отправлена</dt>
+              <dd id="profileSubmittedAt">—</dd>
             </div>
           </dl>
         </section>
       </section>
 
       <div class="route-modal" data-route-modal hidden aria-hidden="true">
-        <div class="route-modal__backdrop" data-route-close onclick="document.querySelector('[data-route-modal]').hidden = true; document.querySelector('[data-route-modal]').setAttribute('aria-hidden', 'true'); document.body.style.overflow=''"></div>
+        <div class="route-modal__backdrop" data-route-close></div>
         <section class="route-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="routeModalTitle">
           <div class="route-modal__header">
             <div>
               <p class="eyebrow" id="routeModalTitle">Как пройти</p>
             </div>
-            <button class="route-modal__close" type="button" aria-label="Закрыть" data-route-close onclick="document.querySelector('[data-route-modal]').hidden = true; document.querySelector('[data-route-modal]').setAttribute('aria-hidden', 'true'); document.body.style.overflow=''">
+            <button class="route-modal__close" type="button" aria-label="Закрыть" data-route-close>
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M6 6l12 12"></path>
                 <path d="M18 6 6 18"></path>

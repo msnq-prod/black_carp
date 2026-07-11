@@ -15,6 +15,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Validate release
+        run: |
+          npm ci
+          npm run check
+          npm test
+
       - name: Deploy on server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -24,3 +39,8 @@ jobs:
           script_stop: true
           script: |
             /usr/local/bin/black-carp-deploy
+
+      - name: Verify production
+        run: |
+          curl --fail --show-error --silent --retry 12 --retry-delay 5 --retry-all-errors https://black-carp.art/health
+          curl --fail --show-error --silent --retry 5 --retry-delay 2 https://black-carp.art/crm/ > /dev/null

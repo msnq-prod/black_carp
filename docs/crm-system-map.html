@@ -1,0 +1,959 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Black Carp CRM — схема взаимодействий</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #171614;
+      --muted: #68645d;
+      --paper: #f7f3ea;
+      --panel: #fffaf0;
+      --line: #d7cab8;
+      --client: #2f6f73;
+      --site: #8c5c2f;
+      --backend: #4e5f91;
+      --telegram: #2b78b8;
+      --master: #7b4e87;
+      --risk: #a94b3d;
+      --ok: #397a45;
+      --shadow: 0 18px 50px rgba(45, 37, 27, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+
+    main {
+      width: min(1380px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 32px 0 48px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    .top {
+      display: grid;
+      grid-template-columns: 1.25fr 0.75fr;
+      gap: 20px;
+      align-items: stretch;
+      margin-bottom: 18px;
+    }
+
+    .intro,
+    .status-panel,
+    .diagram-panel,
+    .lane,
+    .box,
+    .note,
+    .table-panel,
+    .screen-card {
+      border: 1px solid var(--line);
+      background: rgba(255, 250, 240, 0.88);
+      box-shadow: var(--shadow);
+    }
+
+    .intro {
+      padding: 24px;
+      border-radius: 8px;
+    }
+
+    .eyebrow {
+      display: block;
+      color: var(--site);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    h1 {
+      max-width: 980px;
+      font-size: clamp(28px, 4.2vw, 54px);
+      line-height: 1.04;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 880px;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .status-panel {
+      display: grid;
+      gap: 12px;
+      padding: 18px;
+      border-radius: 8px;
+    }
+
+    .status-card {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.52);
+    }
+
+    .status-card strong {
+      display: block;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .status-card span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 18px 0;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 250, 240, 0.74);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--ink);
+    }
+
+    .dot.client { background: var(--client); }
+    .dot.site { background: var(--site); }
+    .dot.backend { background: var(--backend); }
+    .dot.telegram { background: var(--telegram); }
+    .dot.master { background: var(--master); }
+    .dot.risk { background: var(--risk); }
+
+    .diagram-panel {
+      position: relative;
+      overflow: hidden;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 16px;
+    }
+
+    .section-head h2 {
+      font-size: 24px;
+      line-height: 1.12;
+    }
+
+    .section-head p {
+      max-width: 620px;
+      color: var(--muted);
+      font-size: 14px;
+      text-align: right;
+    }
+
+    .flow-map {
+      width: 100%;
+      min-height: 650px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fffdf8;
+    }
+
+    .flow-map svg {
+      display: block;
+      min-width: 1160px;
+      width: 100%;
+      height: auto;
+    }
+
+    .node rect,
+    .node path {
+      stroke-width: 1.4;
+      filter: drop-shadow(0 8px 13px rgba(45, 37, 27, 0.08));
+    }
+
+    .node text {
+      fill: var(--ink);
+      font-size: 14px;
+      font-weight: 750;
+      letter-spacing: 0;
+    }
+
+    .node .sub {
+      fill: var(--muted);
+      font-size: 12px;
+      font-weight: 560;
+    }
+
+    .edge {
+      fill: none;
+      stroke: #6f665b;
+      stroke-width: 2.4;
+      marker-end: url(#arrow);
+    }
+
+    .edge.secondary {
+      stroke: #a79582;
+      stroke-dasharray: 6 7;
+      stroke-width: 2;
+    }
+
+    .edge.risk {
+      stroke: var(--risk);
+      stroke-dasharray: 7 6;
+    }
+
+    .edge-label {
+      fill: #4c463f;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .swimlanes {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .lane {
+      min-height: 176px;
+      padding: 15px;
+      border-radius: 8px;
+    }
+
+    .lane h3 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 16px;
+      margin-bottom: 9px;
+    }
+
+    .lane ul,
+    .box ul,
+    .note ul,
+    .screen-card ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .lane li,
+    .box li,
+    .note li,
+    .screen-card li {
+      position: relative;
+      padding-left: 16px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .lane li::before,
+    .box li::before,
+    .note li::before,
+    .screen-card li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.63em;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.55;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .box,
+    .note,
+    .screen-card,
+    .table-panel {
+      border-radius: 8px;
+      padding: 18px;
+    }
+
+    .box h3,
+    .note h3,
+    .screen-card h3,
+    .table-panel h2 {
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+
+    .box p,
+    .note p,
+    .screen-card p {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 10px;
+      counter-reset: step;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 12px;
+      align-items: start;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.54);
+      counter-increment: step;
+    }
+
+    .step::before {
+      content: counter(step);
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: var(--ink);
+      color: #fffaf0;
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    .step strong {
+      display: block;
+      font-size: 15px;
+    }
+
+    .step span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      padding: 11px 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    td:first-child {
+      font-weight: 800;
+    }
+
+    .screens {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .phone {
+      width: 100%;
+      min-height: 330px;
+      border: 10px solid #1e1c19;
+      border-radius: 28px;
+      background: #fffdf8;
+      overflow: hidden;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+    }
+
+    .phone-bar {
+      height: 34px;
+      background: #1e1c19;
+      color: #fffaf0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .phone-body {
+      padding: 14px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #efe5d8;
+      color: var(--ink);
+      font-size: 11px;
+      font-weight: 850;
+      margin-bottom: 10px;
+    }
+
+    .mock-row {
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      margin-top: 8px;
+      background: rgba(255, 250, 240, 0.78);
+    }
+
+    .mock-row strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .mock-row span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .button {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 38px;
+      margin-top: 12px;
+      border-radius: 6px;
+      background: var(--ink);
+      color: #fffaf0;
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    .warning {
+      border-color: rgba(169, 75, 61, 0.4);
+      background: rgba(169, 75, 61, 0.06);
+    }
+
+    .ok {
+      border-color: rgba(57, 122, 69, 0.4);
+      background: rgba(57, 122, 69, 0.07);
+    }
+
+    .footer-note {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 18px;
+    }
+
+    @media (max-width: 980px) {
+      main {
+        width: min(100% - 20px, 760px);
+        padding-top: 18px;
+      }
+
+      .top,
+      .grid-2,
+      .grid-3,
+      .screens,
+      .swimlanes {
+        grid-template-columns: 1fr;
+      }
+
+      .section-head {
+        display: block;
+      }
+
+      .section-head p {
+        margin-top: 8px;
+        text-align: left;
+      }
+
+      .flow-map {
+        min-height: 570px;
+      }
+
+      .flow-map svg {
+        min-width: 980px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="top" aria-label="Описание схемы">
+      <div class="intro">
+        <span class="eyebrow">Black Carp CRM MVP</span>
+        <h1>Карта взаимодействий сайта, Telegram-бота, backend и CRM WebApp</h1>
+        <p class="lead">Целевая схема: клиент отправляет заявку на сайте, backend сохраняет ее и сразу уведомляет мастера. Мастер открывает заявку в Telegram WebApp CRM, а бот остается только каналом уведомлений.</p>
+      </div>
+
+      <aside class="status-panel" aria-label="Ключевые решения">
+        <div class="status-card ok">
+          <strong>Главное изменение</strong>
+          <span>Клиент больше не обязан переходить в Telegram, чтобы мастер увидел заявку.</span>
+        </div>
+        <div class="status-card">
+          <strong>Основной интерфейс мастера</strong>
+          <span>Telegram WebApp CRM, открывается из кнопки в уведомлении бота.</span>
+        </div>
+        <div class="status-card warning">
+          <strong>Защита CRM</strong>
+          <span>Доступ только по валидному Telegram initData и разрешенным Telegram ID мастеров.</span>
+        </div>
+      </aside>
+    </section>
+
+    <div class="legend" aria-label="Легенда">
+      <span><i class="dot client"></i>Клиент</span>
+      <span><i class="dot site"></i>Сайт</span>
+      <span><i class="dot backend"></i>Backend / БД</span>
+      <span><i class="dot telegram"></i>Telegram Bot API</span>
+      <span><i class="dot master"></i>Мастер / CRM</span>
+      <span><i class="dot risk"></i>Аварийная ветка</span>
+    </div>
+
+    <section class="diagram-panel" aria-label="Главная схема">
+      <div class="section-head">
+        <h2>Основной путь заявки</h2>
+        <p>Слева направо: кто действует, куда уходят данные, что видят клиент и мастер.</p>
+      </div>
+
+      <div class="flow-map" role="img" aria-label="Схема: клиент отправляет заявку на сайте, backend сохраняет данные, бот уведомляет мастера, мастер открывает CRM WebApp">
+        <svg viewBox="0 0 1260 660" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#6f665b"></path>
+            </marker>
+          </defs>
+
+          <rect x="20" y="30" width="220" height="585" rx="10" fill="#eef6f4" stroke="#b8d4d0"></rect>
+          <rect x="260" y="30" width="220" height="585" rx="10" fill="#f7eee4" stroke="#dbc5ad"></rect>
+          <rect x="500" y="30" width="260" height="585" rx="10" fill="#eef0f8" stroke="#c2c8df"></rect>
+          <rect x="780" y="30" width="220" height="585" rx="10" fill="#eaf3fb" stroke="#bed4e8"></rect>
+          <rect x="1020" y="30" width="220" height="585" rx="10" fill="#f3edf5" stroke="#d2bdd8"></rect>
+
+          <text x="40" y="64" fill="#2f6f73" font-size="18" font-weight="900">Клиент</text>
+          <text x="280" y="64" fill="#8c5c2f" font-size="18" font-weight="900">Публичный сайт</text>
+          <text x="520" y="64" fill="#4e5f91" font-size="18" font-weight="900">Backend + SQLite</text>
+          <text x="800" y="64" fill="#2b78b8" font-size="18" font-weight="900">Telegram bot</text>
+          <text x="1040" y="64" fill="#7b4e87" font-size="18" font-weight="900">Мастер / CRM</text>
+
+          <g class="node">
+            <rect x="48" y="105" width="164" height="86" rx="8" fill="#fffdf8" stroke="#84b9b5"></rect>
+            <text x="68" y="133">Заполняет</text>
+            <text x="68" y="153">анкету</text>
+            <text x="68" y="176" class="sub">идея, зона, размер</text>
+          </g>
+
+          <g class="node">
+            <rect x="48" y="258" width="164" height="92" rx="8" fill="#fffdf8" stroke="#84b9b5"></rect>
+            <text x="68" y="288">Оставляет</text>
+            <text x="68" y="308">контакт</text>
+            <text x="68" y="331" class="sub">имя + telegram/phone</text>
+          </g>
+
+          <g class="node">
+            <rect x="288" y="105" width="164" height="86" rx="8" fill="#fffdf8" stroke="#c9a279"></rect>
+            <text x="308" y="133">Форма</text>
+            <text x="308" y="153">заявки</text>
+            <text x="308" y="176" class="sub">frontend validation</text>
+          </g>
+
+          <g class="node">
+            <rect x="288" y="258" width="164" height="92" rx="8" fill="#fffdf8" stroke="#c9a279"></rect>
+            <text x="308" y="286">Экран</text>
+            <text x="308" y="306">успеха</text>
+            <text x="308" y="329" class="sub">номер заявки</text>
+          </g>
+
+          <g class="node">
+            <rect x="532" y="95" width="196" height="102" rx="8" fill="#fffdf8" stroke="#9ea9d0"></rect>
+            <text x="552" y="124">POST</text>
+            <text x="552" y="144">/api/booking/submit</text>
+            <text x="552" y="168" class="sub">валидация, idempotency</text>
+          </g>
+
+          <g class="node">
+            <rect x="532" y="252" width="196" height="110" rx="8" fill="#fffdf8" stroke="#9ea9d0"></rect>
+            <text x="552" y="282">SQLite</text>
+            <text x="552" y="302">booking_requests</text>
+            <text x="552" y="326" class="sub">status=new</text>
+            <text x="552" y="345" class="sub">contact + history</text>
+          </g>
+
+          <g class="node">
+            <rect x="532" y="425" width="196" height="104" rx="8" fill="#fffdf8" stroke="#9ea9d0"></rect>
+            <text x="552" y="454">Uploads</text>
+            <text x="552" y="474">эскизы / рефы</text>
+            <text x="552" y="498" class="sub">локальные файлы</text>
+          </g>
+
+          <g class="node">
+            <rect x="808" y="110" width="164" height="92" rx="8" fill="#fffdf8" stroke="#8bb8dc"></rect>
+            <text x="828" y="140">sendMessage</text>
+            <text x="828" y="160">мастеру</text>
+            <text x="828" y="184" class="sub">кнопка WebApp</text>
+          </g>
+
+          <g class="node">
+            <rect x="808" y="300" width="164" height="92" rx="8" fill="#fffdf8" stroke="#8bb8dc"></rect>
+            <text x="828" y="330">Webhook</text>
+            <text x="828" y="350">сервисные</text>
+            <text x="828" y="374" class="sub">не CRM-интерфейс</text>
+          </g>
+
+          <g class="node">
+            <rect x="1048" y="95" width="164" height="102" rx="8" fill="#fffdf8" stroke="#b995c2"></rect>
+            <text x="1068" y="124">Получает</text>
+            <text x="1068" y="144">уведомление</text>
+            <text x="1068" y="168" class="sub">новая заявка</text>
+          </g>
+
+          <g class="node">
+            <rect x="1048" y="252" width="164" height="110" rx="8" fill="#fffdf8" stroke="#b995c2"></rect>
+            <text x="1068" y="282">Открывает</text>
+            <text x="1068" y="302">CRM WebApp</text>
+            <text x="1068" y="326" class="sub">initData auth</text>
+            <text x="1068" y="345" class="sub">карточка заявки</text>
+          </g>
+
+          <g class="node">
+            <rect x="1048" y="425" width="164" height="104" rx="8" fill="#fffdf8" stroke="#b995c2"></rect>
+            <text x="1068" y="454">Обрабатывает</text>
+            <text x="1068" y="474">заявку</text>
+            <text x="1068" y="498" class="sub">статус, заметка, дата</text>
+          </g>
+
+          <path class="edge" d="M 212 148 C 248 148, 252 148, 288 148"></path>
+          <text class="edge-label" x="226" y="135">переходит</text>
+
+          <path class="edge" d="M 212 304 C 248 304, 252 304, 288 304"></path>
+          <text class="edge-label" x="226" y="291">контакт</text>
+
+          <path class="edge" d="M 452 148 C 486 148, 498 148, 532 148"></path>
+          <text class="edge-label" x="462" y="134">submit</text>
+
+          <path class="edge" d="M 630 197 C 630 222, 630 226, 630 252"></path>
+          <text class="edge-label" x="646" y="231">save</text>
+
+          <path class="edge secondary" d="M 532 462 C 482 452, 470 384, 532 334"></path>
+          <text class="edge-label" x="420" y="424">attachments</text>
+
+          <path class="edge" d="M 728 144 C 764 144, 772 150, 808 156"></path>
+          <text class="edge-label" x="742" y="130">notify</text>
+
+          <path class="edge" d="M 972 156 C 1006 156, 1014 148, 1048 148"></path>
+          <text class="edge-label" x="986" y="135">message</text>
+
+          <path class="edge" d="M 1130 197 C 1130 224, 1130 225, 1130 252"></path>
+          <text class="edge-label" x="1144" y="229">tap</text>
+
+          <path class="edge" d="M 1048 307 C 926 310, 865 512, 728 319"></path>
+          <text class="edge-label" x="824" y="526">/api/crm/* + initData</text>
+
+          <path class="edge" d="M 1130 362 C 1130 391, 1130 396, 1130 425"></path>
+          <text class="edge-label" x="1144" y="400">work</text>
+
+          <path class="edge" d="M 1048 476 C 932 474, 846 361, 728 310"></path>
+          <text class="edge-label" x="806" y="420">PATCH status / notes / schedule</text>
+
+          <path class="edge secondary" d="M 532 144 C 440 196, 444 251, 452 304"></path>
+          <text class="edge-label" x="402" y="231">ok + publicCode</text>
+
+          <path class="edge secondary" d="M 288 304 C 252 304, 248 304, 212 304"></path>
+          <text class="edge-label" x="224" y="331">видит успех</text>
+
+          <path class="edge risk" d="M 890 202 C 902 252, 904 259, 890 300"></path>
+          <text class="edge-label" x="908" y="260" fill="#a94b3d">если Telegram недоступен: заявка остается в БД</text>
+
+          <text x="48" y="574" fill="#2f6f73" font-size="13" font-weight="800">Что видит клиент:</text>
+          <text x="48" y="596" fill="#68645d" font-size="12">форма -> экран успеха -> номер заявки</text>
+
+          <text x="1048" y="574" fill="#7b4e87" font-size="13" font-weight="800">Что видит мастер:</text>
+          <text x="1048" y="596" fill="#68645d" font-size="12">уведомление -> CRM -> карточка -> действия</text>
+        </svg>
+      </div>
+    </section>
+
+    <section class="swimlanes" aria-label="Ответственность участников">
+      <div class="lane">
+        <h3><i class="dot client"></i>Клиент</h3>
+        <ul>
+          <li>заполняет анкету на сайте;</li>
+          <li>оставляет контакт;</li>
+          <li>получает подтверждение без обязательного Telegram.</li>
+        </ul>
+      </div>
+      <div class="lane">
+        <h3><i class="dot site"></i>Сайт</h3>
+        <ul>
+          <li>собирает данные заявки;</li>
+          <li>показывает валидацию;</li>
+          <li>после submit показывает успех.</li>
+        </ul>
+      </div>
+      <div class="lane">
+        <h3><i class="dot backend"></i>Backend</h3>
+        <ul>
+          <li>валидирует и сохраняет заявку;</li>
+          <li>пишет историю;</li>
+          <li>отдает CRM API и защищает доступ.</li>
+        </ul>
+      </div>
+      <div class="lane">
+        <h3><i class="dot telegram"></i>Бот</h3>
+        <ul>
+          <li>отправляет уведомления;</li>
+          <li>дает кнопку WebApp;</li>
+          <li>не является CRM-интерфейсом.</li>
+        </ul>
+      </div>
+      <div class="lane">
+        <h3><i class="dot master"></i>Мастер</h3>
+        <ul>
+          <li>видит очередь заявок;</li>
+          <li>меняет статусы;</li>
+          <li>добавляет заметки и дату.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="grid-2" aria-label="Пути пользователя">
+      <div class="box">
+        <h3>Путь клиента</h3>
+        <div class="timeline">
+          <div class="step"><div><strong>Открывает сайт</strong><span>видит работы и переходит к записи.</span></div></div>
+          <div class="step"><div><strong>Заполняет анкету</strong><span>опыт, эскиз, зона, размер, идея, вложения.</span></div></div>
+          <div class="step"><div><strong>Оставляет контакт</strong><span>имя, Telegram или телефон.</span></div></div>
+          <div class="step"><div><strong>Отправляет заявку</strong><span>видит номер заявки и сообщение об успехе.</span></div></div>
+        </div>
+      </div>
+
+      <div class="box">
+        <h3>Путь мастера</h3>
+        <div class="timeline">
+          <div class="step"><div><strong>Получает уведомление</strong><span>бот присылает краткую карточку новой заявки.</span></div></div>
+          <div class="step"><div><strong>Открывает CRM</strong><span>кнопка в Telegram запускает WebApp.</span></div></div>
+          <div class="step"><div><strong>Разбирает заявку</strong><span>смотрит контакт, анкету, вложения, историю.</span></div></div>
+          <div class="step"><div><strong>Фиксирует решение</strong><span>статус, заметка, дата консультации или сеанса.</span></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="screens" aria-label="Что видят пользователи">
+      <div class="screen-card">
+        <h3>Клиент на сайте</h3>
+        <div class="phone" aria-hidden="true">
+          <div class="phone-bar">black-carp.art</div>
+          <div class="phone-body">
+            <span class="pill">Запись</span>
+            <div class="mock-row"><strong>Идея татуировки</strong><span>Тонкая графика, предплечье</span></div>
+            <div class="mock-row"><strong>Контакт</strong><span>Иван, @username</span></div>
+            <div class="button">Отправить заявку</div>
+            <div class="mock-row"><strong>Заявка отправлена</strong><span>Мастер получил анкету. Номер BC123456</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="screen-card">
+        <h3>Мастер в Telegram</h3>
+        <div class="phone" aria-hidden="true">
+          <div class="phone-bar">Telegram Bot</div>
+          <div class="phone-body">
+            <span class="pill">Новое сообщение</span>
+            <div class="mock-row"><strong>Новая заявка #BC123456</strong><span>Клиент: Иван<br>Контакт: @username<br>Зона: Рука / Предплечье</span></div>
+            <div class="button">Открыть заявку</div>
+            <div class="mock-row"><strong>Роль бота</strong><span>только уведомление и вход в WebApp</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="screen-card">
+        <h3>Мастер в CRM WebApp</h3>
+        <div class="phone" aria-hidden="true">
+          <div class="phone-bar">Black Carp CRM</div>
+          <div class="phone-body">
+            <span class="pill">Заявка #BC123456</span>
+            <div class="mock-row"><strong>Статус: new</strong><span>контакт, анкета, вложения</span></div>
+            <div class="mock-row"><strong>Заметка мастера</strong><span>уточнить место и плотность графики</span></div>
+            <div class="button">Назначить дату</div>
+            <div class="mock-row"><strong>История</strong><span>создана -> открыта -> in_review</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid-3" aria-label="Состав системы">
+      <div class="note ok">
+        <h3>Данные заявки</h3>
+        <ul>
+          <li>анкета клиента;</li>
+          <li>контакт;</li>
+          <li>вложения;</li>
+          <li>статус;</li>
+          <li>история действий.</li>
+        </ul>
+      </div>
+
+      <div class="note">
+        <h3>CRM API</h3>
+        <ul>
+          <li>`GET /api/crm/me`;</li>
+          <li>`GET /api/crm/requests`;</li>
+          <li>`GET /api/crm/requests/:id`;</li>
+          <li>`PATCH status`;</li>
+          <li>`POST notes`;</li>
+          <li>`PATCH schedule`.</li>
+        </ul>
+      </div>
+
+      <div class="note warning">
+        <h3>Контроль доступа</h3>
+        <ul>
+          <li>валидировать `initData`;</li>
+          <li>пускать только `MASTER_TELEGRAM_IDS`;</li>
+          <li>не доверять frontend user id;</li>
+          <li>логировать все изменения.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="table-panel" aria-label="Статусы заявки">
+      <h2>Жизненный цикл заявки</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Статус</th>
+            <th>Кто ставит</th>
+            <th>Что означает</th>
+            <th>Что видит мастер</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>new</td>
+            <td>backend</td>
+            <td>заявка только что пришла с сайта</td>
+            <td>карточка в очереди новых</td>
+          </tr>
+          <tr>
+            <td>in_review</td>
+            <td>мастер</td>
+            <td>мастер открыл и разбирает заявку</td>
+            <td>заявка в работе</td>
+          </tr>
+          <tr>
+            <td>need_details</td>
+            <td>мастер</td>
+            <td>нужны уточнения от клиента</td>
+            <td>контакт и заметка, что спросить</td>
+          </tr>
+          <tr>
+            <td>approved</td>
+            <td>мастер</td>
+            <td>идея подходит, можно назначать время</td>
+            <td>следующее действие — дата</td>
+          </tr>
+          <tr>
+            <td>scheduled</td>
+            <td>мастер</td>
+            <td>дата и длительность назначены</td>
+            <td>заявка в расписании</td>
+          </tr>
+          <tr>
+            <td>done / cancelled</td>
+            <td>мастер</td>
+            <td>заявка закрыта</td>
+            <td>архивная запись</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="grid-2" aria-label="Аварийные сценарии и границы">
+      <div class="box warning">
+        <h3>Если Telegram API недоступен</h3>
+        <ul>
+          <li>заявка все равно сохраняется;</li>
+          <li>в истории пишется ошибка уведомления;</li>
+          <li>сайт показывает клиенту успех, если сохранение прошло;</li>
+          <li>мастер увидит заявку при открытии CRM.</li>
+        </ul>
+      </div>
+
+      <div class="box">
+        <h3>Что не строим в MVP</h3>
+        <ul>
+          <li>платежи и предоплату;</li>
+          <li>автоматические свободные слоты;</li>
+          <li>клиентский личный кабинет;</li>
+          <li>сложные роли и несколько салонов;</li>
+          <li>отдельную desktop CRM.</li>
+        </ul>
+      </div>
+    </section>
+
+    <p class="footer-note">Схема соответствует реализованной MVP-архитектуре: заявка сохраняется на сайте, мастер уведомляется через outbox и открывает защищённую Telegram WebApp CRM.</p>
+  </main>
+</body>
+</html>

@@ -412,7 +412,7 @@
     .phone-hero {
       position: relative;
       height: 190px;
-      background-image: linear-gradient(180deg, rgba(0,0,0,.08), #050505), url("../assets/media/hero-forearm.png");
+      background-image: linear-gradient(180deg, rgba(0,0,0,.08), #050505), url("../assets/media/work-hero-01.jpg");
       background-size: cover;
       background-position: 50% 35%;
     }
@@ -740,13 +740,13 @@
     <div class="slides" data-slides>
       <section class="slide">
         <div class="slide-inner hero-grid">
-          <header class="topline"><span>Telegram-заявка и бот</span></header>
+          <header class="topline"><span>CRM WebApp и Telegram-бот</span></header>
           <div>
             <h1 class="title">Система записи Black Carp</h1>
-            <p class="lead">Клиент заполняет красивую анкету на сайте. После перехода клиента в Telegram мастер получает структурированную заявку и продолжает диалог в привычном канале.</p>
+            <p class="lead">Клиент заполняет анкету на сайте и сразу отправляет ее мастеру. Бот уведомляет о новой заявке и открывает защищенную CRM WebApp.</p>
           </div>
           <div class="media-frame">
-            <img src="../assets/media/hero-forearm.png" alt="Black Carp tattoo">
+            <img src="../assets/media/work-hero-01.jpg" alt="Black Carp tattoo">
           </div>
         </div>
       </section>
@@ -770,24 +770,24 @@
             <article class="card">
               <span class="card-num">02</span>
               <h3>Заявка мастеру</h3>
-              <p>После клика `Перейти в Telegram` сервер сохраняет заявку, а карточка мастеру уходит после открытия клиентом бота.</p>
+              <p>После клика `Отправить заявку` сервер сохраняет данные и сразу ставит уведомление мастеру в надежную очередь.</p>
               <ul class="stack-list">
                 <li>номер заявки;</li>
                 <li>ответы клиента;</li>
                 <li>оценка масштаба;</li>
                 <li>ссылки на вложения;</li>
-                <li>кнопки действий.</li>
+                <li>кнопка открытия CRM.</li>
               </ul>
             </article>
             <article class="card">
               <span class="card-num">03</span>
-              <h3>Диалог в Telegram</h3>
-              <p>Бот подтверждает получение анкеты, связывает клиента с заявкой и оставляет живое общение в привычном канале.</p>
+              <h3>CRM внутри Telegram</h3>
+              <p>Мастер открывает WebApp, меняет статус, назначает дату, добавляет заметки и видит историю.</p>
               <ul class="stack-list">
-                <li>подтверждение клиенту;</li>
-                <li>уточнения;</li>
-                <li>статусы;</li>
-                <li>назначение консультации.</li>
+                <li>защищенный доступ;</li>
+                <li>статусы и поиск;</li>
+                <li>вложения и заметки;</li>
+                <li>планирование.</li>
               </ul>
             </article>
           </div>
@@ -799,13 +799,13 @@
           <header class="topline"><span>Сценарий</span></header>
           <div class="text-stack">
             <h2 class="section-title">Мастер получает анкету до начала переписки.</h2>
-            <p>Для этого форма отправляется не через Telegram deep link, а сначала на наш сервер. Telegram открывается уже после успешного сохранения заявки.</p>
+            <p>Форма отправляется напрямую на backend. Клиент видит успех на сайте, а Telegram остается необязательным каналом связи.</p>
           </div>
           <div class="flow">
             <div class="flow-card"><span class="dot">1</span><div><strong>Клиент заполняет форму</strong><p>Сайт собирает ответы и файлы.</p></div></div>
-            <div class="flow-card"><span class="dot">2</span><div><strong>Сервер сохраняет заявку</strong><p>PostgreSQL хранит данные, файлы лежат отдельно.</p></div></div>
+            <div class="flow-card"><span class="dot">2</span><div><strong>Сервер сохраняет заявку</strong><p>SQLite хранит данные, вложения закрыты авторизацией CRM.</p></div></div>
             <div class="flow-card"><span class="dot">3</span><div><strong>Мастер получает карточку</strong><p>Бот отправляет мастеру сообщение в Telegram.</p></div></div>
-            <div class="flow-card"><span class="dot">4</span><div><strong>Клиент открывает Telegram</strong><p>По коду бот связывает клиента с уже созданной заявкой.</p></div></div>
+            <div class="flow-card"><span class="dot">4</span><div><strong>Мастер открывает CRM</strong><p>WebApp сразу открывает карточку нужной заявки.</p></div></div>
           </div>
         </div>
       </section>
@@ -822,7 +822,7 @@
                 <div class="field"><span>Размер</span><strong>M · около 15 см</strong></div>
                 <div class="field"><span>Идея</span><strong>Карп, тонкая графика, без плотного закраса</strong></div>
                 <div class="field"><span>Референсы</span><strong>2 изображения</strong></div>
-                <div class="cta">Перейти в Telegram</div>
+                <div class="cta">Отправить заявку</div>
               </div>
             </div>
           </div>
@@ -830,13 +830,13 @@
             <h2 class="section-title">Клиент не чувствует “опросник в боте”.</h2>
             <p>Он проходит аккуратный визуальный сценарий на сайте, видит резюме заявки и понимает, что мастер уже получил контекст.</p>
             <div class="telegram-card">
-              <div class="tg-header"><span>Telegram</span><span>после Start</span></div>
-              <div class="tg-title">Ваша анкета получена</div>
+              <div class="tg-header"><span>Сайт</span><span>сразу после отправки</span></div>
+              <div class="tg-title">Заявка отправлена</div>
               <div class="tg-lines">
                 <span>Мастер уже видит идею, зону, размер и референсы.</span>
-                <span>Здесь можно продолжить диалог и уточнить детали консультации.</span>
+                <span>Мастер свяжется по указанному контакту.</span>
               </div>
-              <div class="tg-actions"><span>Открыть анкету</span><span>Добавить сообщение</span><span>Добавить референс</span></div>
+              <div class="tg-actions"><span>Номер заявки</span><span>Новая заявка</span></div>
             </div>
           </div>
         </div>
@@ -853,7 +853,7 @@
             <div class="tg-header"><span>Новая заявка</span><span>#BC7H2K</span></div>
             <div class="tg-title">Black Carp · консультация</div>
             <div class="tg-lines">
-              <span><strong>Статус:</strong> анкета отправлена, клиент переходит в Telegram</span>
+              <span><strong>Статус:</strong> новая заявка с сайта</span>
               <span><strong>Опыт:</strong> первая татуировка</span>
               <span><strong>Эскиз:</strong> нужна разработка</span>
               <span><strong>Зона:</strong> руки / предплечье / спереди</span>
@@ -861,7 +861,7 @@
               <span><strong>Идея:</strong> японский карп, тонкие линии, без плотного закраса</span>
               <span><strong>Референсы:</strong> 2 файла</span>
             </div>
-            <div class="tg-actions"><span>Взять в работу</span><span>Уточнить</span><span>Назначить консультацию</span><span>Открыть файлы</span></div>
+            <div class="tg-actions"><span>Открыть заявку в CRM</span></div>
           </div>
         </div>
       </section>
@@ -872,7 +872,7 @@
           <div class="two-col">
             <div class="text-stack">
               <h2 class="section-title">Архитектура под VPS без лишней нагрузки.</h2>
-              <p>Раз сервер свой, делаем обычный надежный backend: Node.js API, webhook Telegram, PostgreSQL и хранение файлов на диске или S3-совместимом хранилище.</p>
+              <p>Production backend: Node.js API, Telegram webhook, SQLite, приватные локальные вложения и retry-outbox.</p>
             </div>
             <div class="architecture">
               <div class="arch-row">
@@ -881,7 +881,7 @@
                 <div class="arch-box"><strong>Node.js API</strong><span>прием анкеты, валидация, загрузка файлов</span></div>
               </div>
               <div class="arch-row">
-                <div class="arch-box"><strong>PostgreSQL</strong><span>заявки, клиенты, статусы, заметки</span></div>
+                <div class="arch-box"><strong>SQLite</strong><span>заявки, клиенты, статусы, заметки</span></div>
                 <div class="arrow">↔</div>
                 <div class="arch-box"><strong>Telegram Bot</strong><span>webhook, уведомления, кнопки мастера</span></div>
               </div>
@@ -900,17 +900,18 @@
           <header class="topline"><span>База данных</span></header>
           <div class="two-col">
             <div class="text-stack">
-              <h2 class="section-title">PostgreSQL как основа заявки.</h2>
+              <h2 class="section-title">SQLite как единый источник данных MVP.</h2>
               <p>База хранит структуру и историю. Файлы не кладем в таблицы: в БД только ключи и метаданные.</p>
             </div>
             <div class="table">
               <div class="table-row header"><div>Таблица</div><div>Что хранит</div><div>Зачем</div></div>
               <div class="table-row"><div>clients</div><div>Telegram ID, username, имя</div><div>связь клиента с заявками</div></div>
               <div class="table-row"><div>booking_requests</div><div>анкета, зона, размер, идея, статус</div><div>главная сущность системы</div></div>
-              <div class="table-row"><div>attachments</div><div>эскизы и референсы</div><div>быстрый доступ к файлам</div></div>
+              <div class="table-row"><div>booking_attachments</div><div>эскизы и референсы</div><div>приватный доступ к файлам</div></div>
               <div class="table-row"><div>status_history</div><div>изменения статусов</div><div>контроль процесса</div></div>
-              <div class="table-row"><div>master_notes</div><div>заметки мастера</div><div>внутренний контекст</div></div>
-              <div class="table-row"><div>consultations</div><div>предложенное время</div><div>ручное назначение консультации</div></div>
+              <div class="table-row"><div>crm_notes</div><div>заметки мастера</div><div>внутренний контекст</div></div>
+              <div class="table-row"><div>crm_activity</div><div>действия в CRM</div><div>аудит процесса</div></div>
+              <div class="table-row"><div>notification_outbox</div><div>очередь уведомлений</div><div>повторная доставка</div></div>
             </div>
           </div>
         </div>
@@ -924,14 +925,13 @@
             <p>Статусы нужны не для сложной CRM, а чтобы мастер видел, что уже сделано и где клиент сейчас.</p>
           </div>
           <div class="status-grid">
-            <div class="status"><strong>submitted</strong><span>анкета сохранена, мастер уведомлен</span></div>
-            <div class="status"><strong>awaiting_client_start</strong><span>клиент еще не нажал Start в боте</span></div>
-            <div class="status"><strong>client_linked</strong><span>Telegram-профиль связан с заявкой</span></div>
+            <div class="status"><strong>new</strong><span>новая заявка</span></div>
             <div class="status"><strong>in_review</strong><span>мастер смотрит заявку</span></div>
             <div class="status"><strong>need_details</strong><span>нужны уточнения</span></div>
-            <div class="status"><strong>consultation_offered</strong><span>предложено время консультации</span></div>
-            <div class="status"><strong>consultation_scheduled</strong><span>консультация назначена</span></div>
-            <div class="status"><strong>closed</strong><span>заявка закрыта</span></div>
+            <div class="status"><strong>approved</strong><span>заявка согласована</span></div>
+            <div class="status"><strong>scheduled</strong><span>сеанс назначен</span></div>
+            <div class="status"><strong>done</strong><span>работа завершена</span></div>
+            <div class="status"><strong>cancelled</strong><span>заявка отменена</span></div>
           </div>
         </div>
       </section>

@@ -35,6 +35,8 @@ npm install --omit=dev
 npm start
 ```
 
+Воспроизводимая backend-сборка находится в `Dockerfile`, локальный production-пример — в `docker-compose.production.example.yml`. Ежедневный backup SQLite и uploads выполняется `ops/backup.sh` из host cron/system timer.
+
 Минимальные env-переменные:
 
 ```text
@@ -44,6 +46,9 @@ BOT_TOKEN=...
 BOT_USERNAME=blackcarp_bot
 WEBHOOK_SECRET=...
 MASTER_CHAT_IDS=...
+MASTER_TELEGRAM_IDS=...
+CRM_WEBAPP_URL=https://black-carp.art/crm
+HOST=0.0.0.0
 DB_PATH=./data/black-carp.sqlite
 JSON_LIMIT=25mb
 ALLOWED_ORIGINS=https://black-carp.art,https://www.black-carp.art
@@ -69,7 +74,7 @@ curl -I https://black-carp.art/
 curl https://black-carp.art/health
 curl -X POST https://black-carp.art/api/booking/submit \
   -H "Content-Type: application/json" \
-  -d '{"idempotencyKey":"deploy-test-1","consentAt":"2026-07-04T00:00:00.000Z","firstTattoo":"yes","hasSketch":false,"bodyZone":"Руки","bodySubzone":"Предплечье","bodyView":"front","sizePreset":"M","sizeCm":15,"ideaText":"Тестовая заявка","attachments":[]}'
+  -d '{"idempotencyKey":"deploy-test-1","consentAt":"2026-07-04T00:00:00.000Z","firstTattoo":"yes","hasSketch":false,"bodyZone":"Руки","bodySubzone":"Предплечье","bodyView":"front","sizePreset":"M","sizeCm":15,"ideaText":"Тестовая заявка","clientName":"Тест","contactType":"telegram","contactValue":"@test","attachments":[]}'
 ```
 
 Telegram webhook:
@@ -82,4 +87,4 @@ curl "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" \
 
 ## Важно
 
-В этом репозитории сейчас нет подтвержденного `.github/workflows/validate.yml`. Старое описание GitHub Actions и `/srv/www/black-carp` не считается актуальным без отдельной проверки.
+Перед деплоем GitHub Actions выполняет `npm ci`, syntax-check и интеграционные тесты. Сам серверный deploy-скрипт и Caddy-конфигурацию нужно проверять отдельно на хосте перед первым релизом CRM.
