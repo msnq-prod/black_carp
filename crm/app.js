@@ -3,6 +3,8 @@
   const params = new URLSearchParams(location.search);
   const devMasterId = params.get("devMasterId");
   const requestedCode = params.get("request");
+  const mobileViewport = window.matchMedia("(max-width: 760px)");
+  const telegramBackButtonSupported = Boolean(tg?.isVersionAtLeast?.("6.1"));
   const statusLabels = {
     "": "Все", new: "Новые", in_review: "В работе", need_details: "Уточнить",
     approved: "Согласовано", scheduled: "Запланировано", done: "Готово", cancelled: "Отменено"
@@ -24,6 +26,7 @@
   const requestTimeoutMs = 15_000;
   const attachmentObjectUrls = new Set();
   let attachmentHydrationVersion = 0;
+  let listScrollPosition = 0;
   const $ = (selector) => document.querySelector(selector);
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;" }[char]));
   const authHeaders = () => ({
@@ -117,7 +120,7 @@
       root.innerHTML = state.items.map((item) => {
         const size = item.sizeCm ? ` · ${item.sizeCm} см` : "";
         const attachment = item.hasAttachments ? " · есть файлы" : "";
-        return `<button class="request-row ${item.id === state.selectedId ? "is-active" : ""}" data-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.status)}" type="button"><span class="request-row__status"></span><span class="request-row__main"><strong>${escapeHtml(item.clientName)}</strong><small>${escapeHtml(item.publicCode)} · ${escapeHtml(statusLabels[item.status] || item.status)} · ${escapeHtml(item.bodySubzone || item.bodyZone)}${escapeHtml(size)}${escapeHtml(attachment)}</small><small>${escapeHtml(item.contactValue)}</small></span><time>${formatDate(item.createdAt)}</time></button>`;
+        return `<button class="request-row ${item.id === state.selectedId ? "is-active" : ""}" data-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.status)}" type="button" aria-current="${item.id === state.selectedId ? "true" : "false"}"><span class="request-row__status"></span><span class="request-row__main"><strong>${escapeHtml(item.clientName)}</strong><small>${escapeHtml(item.publicCode)} · ${escapeHtml(statusLabels[item.status] || item.status)} · ${escapeHtml(item.bodySubzone || item.bodyZone)}${escapeHtml(size)}${escapeHtml(attachment)}</small><small>${escapeHtml(item.contactValue)}</small></span><time>${formatDate(item.createdAt)}</time></button>`;
       }).join("");
     }
     $("#loadMore").hidden = !state.cursor;
@@ -168,6 +171,45 @@
     hydrateAttachments(hydrationVersion);
   }
 
+  function updateRequestUrl(requestCode, mode = "push") {
+    if (mode === "none") return;
+    const url = new URL(location.href);
+    if (requestCode) url.searchParams.set("request", requestCode);
+    else url.searchParams.delete("request");
+    history[mode === "replace" ? "replaceState" : "pushState"]({ request:requestCode || null }, "", url);
+  }
+
+  function enterDetailView(detail, historyMode = "push") {
+    document.body.classList.add("detail-open");
+    updateRequestUrl(detail.publicCode, historyMode);
+    if (mobileViewport.matches) {
+      if (telegramBackButtonSupported) tg.BackButton.show();
+      window.scrollTo({ top:0, behavior:"auto" });
+    }
+  }
+
+  function leaveDetailView(historyMode = "push") {
+    if (state.saving) {
+      setSync("Дождитесь завершения сохранения", true);
+      return;
+    }
+    const previousId = state.selectedId;
+    state.selectionVersion += 1;
+    state.selectedId = null;
+    state.selected = null;
+    releaseAttachmentUrls();
+    attachmentHydrationVersion += 1;
+    document.body.classList.remove("detail-open");
+    $("#requestDetail").innerHTML = '<div class="empty-detail"><p class="eyebrow">BLACK CARP CRM</p><h2>Выберите<br>заявку.</h2></div>';
+    updateRequestUrl(null, historyMode);
+    if (telegramBackButtonSupported) tg.BackButton.hide();
+    renderRows();
+    requestAnimationFrame(() => {
+      if (mobileViewport.matches) window.scrollTo({ top:listScrollPosition, behavior:"auto" });
+      if (previousId) document.querySelector(`[data-id="${CSS.escape(previousId)}"]`)?.focus({ preventScroll:true });
+    });
+  }
+
   function setDetailControlsDisabled(disabled) {
     $("#requestDetail").querySelectorAll("button,input,select,textarea").forEach((control) => {
       if (disabled) {
@@ -200,10 +242,7 @@
   }
 
   function bindDetail(detail) {
-    $("#mobileBack").addEventListener("click", () => {
-      $(".request-list").scrollIntoView({ behavior:"smooth", block:"start" });
-      $("#searchInput").focus({ preventScroll:true });
-    });
+    $("#mobileBack").addEventListener("click", () => leaveDetailView());
     $("#copyContact").addEventListener("click", () => copyText(detail.contactValue || "", "Контакт скопирован"));
     $("#copySummary").addEventListener("click", () => copyText(summaryText(detail), "Резюме скопировано"));
     $("#statusSelect").addEventListener("change", async (event) => {
@@ -312,19 +351,18 @@
     releaseAttachmentUrls();
     attachmentHydrationVersion += 1;
     $("#requestDetail").innerHTML = `<button class="mobile-back" id="mobileBack" type="button">К списку</button><div class="state-error" role="alert"><p>${escapeHtml(humanError(error))}</p><button type="button" data-retry-request="${escapeHtml(idOrCode)}">Повторить</button></div>`;
-    $("#mobileBack").addEventListener("click", () => {
-      $(".request-list").scrollIntoView({ behavior:"smooth", block:"start" });
-      $("#searchInput").focus({ preventScroll:true });
-    });
+    document.body.classList.add("detail-open");
+    $("#mobileBack").addEventListener("click", () => leaveDetailView());
     $("[data-retry-request]").addEventListener("click", () => select(idOrCode));
   }
 
-  async function select(idOrCode) {
+  async function select(idOrCode, { historyMode = "push" } = {}) {
     if (state.saving) {
       setSync("Дождитесь завершения сохранения", true);
       return;
     }
     const selectionVersion = ++state.selectionVersion;
+    if (mobileViewport.matches && !document.body.classList.contains("detail-open")) listScrollPosition = window.scrollY;
     setSync("Открываем заявку…");
     $("#requestDetail").setAttribute("aria-busy", "true");
     try {
@@ -334,10 +372,8 @@
       state.selected = result.request;
       renderRows();
       renderDetail(result.request);
+      enterDetailView(result.request, historyMode);
       $("#requestDetail").focus({ preventScroll:true });
-      if (matchMedia("(max-width: 760px)").matches) {
-        $("#requestDetail").scrollIntoView({ behavior:"smooth", block:"start" });
-      }
       setSync("");
     } catch (error) {
       if (selectionVersion !== state.selectionVersion) return;
@@ -345,11 +381,9 @@
       state.selected = null;
       renderRows();
       renderDetailError(error, idOrCode);
+      updateRequestUrl(idOrCode, historyMode);
       setSync(humanError(error), true);
       $("#requestDetail").focus({ preventScroll:true });
-      if (matchMedia("(max-width: 760px)").matches) {
-        $("#requestDetail").scrollIntoView({ behavior:"smooth", block:"start" });
-      }
     } finally {
       if (selectionVersion === state.selectionVersion) $("#requestDetail").removeAttribute("aria-busy");
     }
@@ -407,7 +441,7 @@
       $("#workspace").hidden = false;
       renderFilters();
       await load();
-      if (requestedCode) await select(requestedCode);
+      if (requestedCode) await select(requestedCode, { historyMode:"replace" });
     } catch (error) {
       if ([401, 403].includes(error.status)) {
         $("#workspace").hidden = true;
@@ -433,7 +467,7 @@
     }
     const selectedId = state.selectedId;
     await load(false);
-    if (selectedId) await select(selectedId);
+    if (selectedId) await select(selectedId, { historyMode:"none" });
   }
 
   $("#filters").addEventListener("click", (event) => { const button = event.target.closest("[data-status]"); if (!button) return; state.status = button.dataset.status; state.cursor = null; renderFilters(); load(); });
@@ -448,6 +482,12 @@
   $("#searchInput").addEventListener("input", (event) => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.q = event.target.value.trim(); state.cursor = null; load(); }, 250); });
   $("#loadMore").addEventListener("click", () => { if (!state.loading) load(true); });
   $("#refreshButton").addEventListener("click", refreshWorkspace);
+  if (telegramBackButtonSupported) tg.BackButton.onClick(() => leaveDetailView());
+  window.addEventListener("popstate", () => {
+    const requestCode = new URLSearchParams(location.search).get("request");
+    if (requestCode) select(requestCode, { historyMode:"none" });
+    else leaveDetailView("none");
+  });
   window.addEventListener("pagehide", releaseAttachmentUrls);
   boot();
 })();
