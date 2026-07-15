@@ -17,8 +17,8 @@ jobs:
       COMPOSE_FILE: docker-compose.production.example.yml
       COMPOSE_PROJECT_NAME: black-carp-ci
       BLACK_CARP_ENV_FILE: ${{ github.workspace }}/.env.example
-      BLACK_CARP_DATA_DIR: ${{ runner.temp }}/black-carp-data
-      BLACK_CARP_UPLOADS_DIR: ${{ runner.temp }}/black-carp-uploads
+      BLACK_CARP_DATA_DIR: ${{ github.workspace }}/.tmp/black-carp-data
+      BLACK_CARP_UPLOADS_DIR: ${{ github.workspace }}/.tmp/black-carp-uploads
       BLACK_CARP_RELEASE_SHA: ${{ github.sha }}
 
     steps:
