@@ -1,10 +1,6 @@
 services:
   black-carp-init:
     image: black-carp:${BLACK_CARP_RELEASE_SHA:-local}
-    build:
-      context: .
-      args:
-        VCS_REF: ${BLACK_CARP_RELEASE_SHA:-local}
     user: "0:0"
     restart: "no"
     environment:
