@@ -20,13 +20,19 @@ try {
   }
 
   const requestCount = Number(database.prepare("SELECT COUNT(*) AS count FROM booking_requests").get().count);
-  const attachments = database.prepare("SELECT file_path FROM booking_attachments").all();
+  const attachments = database.prepare("SELECT file_path, size_bytes FROM booking_attachments").all();
   if (restoreRoot) {
     const root = path.resolve(restoreRoot);
+    const uploadsRoot = path.resolve(root, "uploads", "booking") + path.sep;
     for (const attachment of attachments) {
       const target = path.resolve(root, String(attachment.file_path || ""));
-      if (!target.startsWith(`${root}${path.sep}`) || !fs.existsSync(target)) {
+      if (!target.startsWith(uploadsRoot) || !fs.existsSync(target)) {
         throw new Error("restored attachment set is incomplete");
+      }
+      const stat = fs.lstatSync(target);
+      if (!stat.isFile()) throw new Error("restored attachment set contains a non-file");
+      if (attachment.size_bytes != null && Number(attachment.size_bytes) !== stat.size) {
+        throw new Error("restored attachment size does not match metadata");
       }
     }
   }

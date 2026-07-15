@@ -44,6 +44,17 @@ while IFS= read -r entry; do
   esac
 done < <(tar -tzf "$UPLOADS_ARCHIVE")
 
+while IFS= read -r entry; do
+  file_type="${entry:0:1}"
+  case "$file_type" in
+    -|d) ;;
+    *)
+      echo "Unsupported link or special file in uploads archive" >&2
+      exit 65
+      ;;
+  esac
+done < <(tar -tvzf "$UPLOADS_ARCHIVE")
+
 restore_dir="$(mktemp -d "${TMPDIR:-/tmp}/black-carp-restore.XXXXXX")"
 cleanup() {
   rm -rf "$restore_dir"

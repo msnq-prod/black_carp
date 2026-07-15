@@ -2,17 +2,16 @@
 
 ## Текущее подтвержденное состояние
 
-Продакшен-хост: `root@79.141.77.238`.
+Продакшен-хост: задаётся секретами GitHub Actions; реальные адреса и пути не хранятся в репозитории.
 
 На сервере уже есть общий Docker Compose stack с Caddy. Он обслуживает не только `black-carp.art`, поэтому изменения нужно держать строго в зоне Black Carp и не трогать конфигурацию `zagarami.com` без отдельной задачи.
 
 Подтвержденная ранее схема:
 
-- compose-файл: `/root/apps/stones/docker-compose.prod.yml`;
-- Caddyfile: `/root/apps/stones/docker/Caddyfile`;
-- Caddy-контейнер: `stones-caddy-1`;
-- Caddy root для Black Carp внутри контейнера: `/data/black-carp`;
-- файл в Docker volume: `/media/system/docker/volumes/stones_caddy_data/_data/black-carp/index.html`.
+- compose-файл: `<host-compose-file>`;
+- Caddyfile: `<host-caddyfile>`;
+- Caddy-контейнер: `<caddy-container>`;
+- Caddy root для Black Carp внутри контейнера: `<caddy-root>`.
 
 Отдельно был назван путь `/data/black-carp/index.html`, но перед следующей заменой файла нужно заново проверить текущий mount на сервере.
 
@@ -119,7 +118,7 @@ curl "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" \
 
 ## Важно
 
-`/usr/local/bin/black-carp-deploy <40-char-sha>` обязан развернуть ровно переданный commit: создать и проверить backup, собрать image с OCI revision label, запустить candidate, выполнить health/smoke и только затем атомарно переключить Caddy. Скрипт обязан поставить trap и самостоятельно вернуть предыдущую ревизию при любом обрыве после переключения. Предыдущий image и backup сохраняются для rollback. `/usr/local/bin/black-carp-rollback <failed-sha>` обязан быть идемпотентным: ничего не менять, если failed SHA не был активирован, иначе вернуть предыдущую подтверждённую ревизию. Эти host scripts находятся вне репозитория и должны быть обновлены до включения workflow.
+`/usr/local/bin/black-carp-deploy <40-char-sha>` обязан развернуть ровно переданный commit: создать и проверить backup, собрать image с OCI revision label, запустить candidate, выполнить health/smoke и только затем переключить Caddy. Текущий пример Compose — single-slot: он не поддерживает параллельный candidate из-за фиксированного loopback-порта и service alias. Для атомарного переключения host script обязан использовать отдельный Compose override с уникальными портом, service alias и Caddy upstream; до такой проверки нельзя заявлять zero-downtime. Допустимый fallback — явно согласованный stop/start с окном недоступности и rollback. Скрипт обязан поставить trap и самостоятельно вернуть предыдущую ревизию при любом обрыве после переключения. Предыдущий image и backup сохраняются для rollback. `/usr/local/bin/black-carp-rollback <failed-sha>` обязан быть идемпотентным: ничего не менять, если failed SHA не был активирован, иначе вернуть предыдущую подтверждённую ревизию. Эти host scripts находятся вне репозитория и должны быть обновлены до включения workflow.
 
 Backup запускается не от root, а от выделенного пользователя `black-carp`; его UID/GID передаются Compose через `BLACK_CARP_UID`/`BLACK_CARP_GID`, поэтому он читает закрытые bind mounts. Cron явно задаёт production-пути `/srv/data/black-carp/black-carp.sqlite` и `/srv/uploads/black-carp`. `ops/backup.sh` сериализует запуски, проверяет SQLite, создаёт checksum и выполняет пробное восстановление. `BLACK_CARP_BACKUP_HOOK` может указывать на root-owned executable, который получает три аргумента — SQLite, uploads archive и checksum — и отправляет их в зашифрованное off-host хранилище.
 

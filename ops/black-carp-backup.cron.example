@@ -1,4 +1,5 @@
 # Install into /etc/cron.d/black-carp-backup only after creating the dedicated
 # black-carp user with the same UID/GID configured in Compose and its private
-# backup directory. Point BLACK_CARP_NODE_BIN to pinned Node.js 22 on the host.
-30 3 * * * black-carp BLACK_CARP_APP_DIR=/srv/www/black-carp BLACK_CARP_BACKUP_DIR=/srv/backups/black-carp BLACK_CARP_DB_PATH=/srv/data/black-carp/black-carp.sqlite BLACK_CARP_UPLOADS_PATH=/srv/uploads/black-carp BLACK_CARP_NODE_BIN=/usr/bin/node /srv/www/black-carp/ops/backup.sh >> /srv/backups/black-carp/backup.log 2>&1
+# backup directory. Create the executable offsite hook before enabling this job;
+# the backup must fail loudly until off-host retention is configured.
+30 3 * * * black-carp BLACK_CARP_APP_DIR=/srv/www/black-carp BLACK_CARP_BACKUP_DIR=/srv/backups/black-carp BLACK_CARP_DB_PATH=/srv/data/black-carp/black-carp.sqlite BLACK_CARP_UPLOADS_PATH=/srv/uploads/black-carp BLACK_CARP_NODE_BIN=/usr/bin/node BLACK_CARP_BACKUP_HOOK=/usr/local/bin/black-carp-backup-offsite /srv/www/black-carp/ops/backup.sh >> /srv/backups/black-carp/backup.log 2>&1
