@@ -23,6 +23,7 @@
     client_message: "Сообщение клиента"
   };
   const state = { status: "", q: "", cursor: null, items: [], counts: {}, selectedId: null, selected: null, loading: false, pendingReload: false, selectionVersion: 0, saving: false };
+  const portfolio = { status:"", q:"", items:[], counts:{}, current:null, imageDataUrl:null, loading:false, dirty:false };
   const requestTimeoutMs = 15_000;
   const attachmentObjectUrls = new Set();
   let attachmentHydrationVersion = 0;
@@ -63,6 +64,11 @@
       invalid_transition: "Статус заявки уже изменился. Обновите карточку.",
       invalid_schedule: "Проверьте дату, время и длительность.",
       note_required: "Введите текст заметки.",
+      title_required: "Укажите название работы.",
+      invalid_year: "Проверьте год работы.",
+      invalid_portfolio_image: "Выберите корректное JPG, PNG или WebP до 8 МБ.",
+      item_incomplete: "Для публикации нужны изображение, название и alt-текст.",
+      archived_item: "Архивную работу нельзя редактировать.",
       forbidden: "У этого Telegram-профиля нет доступа.",
       invalid_init_data: "Сессия Telegram устарела. Откройте CRM из бота заново."
     };
@@ -433,6 +439,207 @@
     }
   }
 
+  function updateSectionUrl(section, itemId = null, mode = "push") {
+    if (mode === "none") return;
+    const url = new URL(location.href);
+    if (section === "portfolio") url.searchParams.set("section", "portfolio");
+    else url.searchParams.delete("section");
+    if (itemId) url.searchParams.set("item", itemId);
+    else url.searchParams.delete("item");
+    if (section !== "requests") url.searchParams.delete("request");
+    history[mode === "replace" ? "replaceState" : "pushState"]({ section, item:itemId }, "", url);
+  }
+
+  function setActiveNav(section) {
+    document.querySelectorAll("[data-section]").forEach((button) => button.classList.toggle("is-active", button.dataset.section === section));
+  }
+
+  async function showSection(section, { historyMode = "push", itemId = null } = {}) {
+    if (section === "portfolio") {
+      document.body.classList.remove("detail-open", "portfolio-edit");
+      document.body.classList.add("section-portfolio");
+      $("#portfolioSection").hidden = false;
+      $("#portfolioEditor").hidden = true;
+      setActiveNav("portfolio");
+      if (telegramBackButtonSupported) tg.BackButton.hide();
+      updateSectionUrl("portfolio", null, itemId ? "none" : historyMode);
+      if (!portfolio.items.length) await loadPortfolio();
+      if (itemId) await openPortfolioEditor(itemId, historyMode);
+      return;
+    }
+    document.body.classList.remove("section-portfolio", "portfolio-edit");
+    $("#portfolioSection").hidden = true;
+    $("#portfolioEditor").hidden = true;
+    setActiveNav("requests");
+    updateSectionUrl("requests", null, historyMode);
+  }
+
+  function renderPortfolio() {
+    const published = Number(portfolio.counts.published || 0);
+    const drafts = Number(portfolio.counts.draft || 0);
+    $("#portfolioSummary").innerHTML = `<span><b>${published}</b> опубликовано</span><span><b>${drafts}</b> черновиков</span>`;
+    document.querySelectorAll("[data-portfolio-status]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.portfolioStatus === portfolio.status)));
+    const root = $("#portfolioGrid");
+    if (!portfolio.items.length) {
+      root.innerHTML = '<p class="list-empty">Работ по этому фильтру нет.</p>';
+      return;
+    }
+    const canReorder = !portfolio.status && !portfolio.q;
+    root.innerHTML = portfolio.items.map((item, index) => {
+      const badge = item.status === "published" ? "В ЭФИРЕ" : item.status === "draft" ? "ЧЕРНОВИК" : "АРХИВ";
+      const badgeClass = item.status === "draft" ? "work-badge--draft" : item.status === "archived" ? "work-badge--archived" : "";
+      const meta = [item.bodyZone, item.style, item.year].filter(Boolean).join(" · ") || "Без описания";
+      return `<article class="work-card" data-portfolio-id="${escapeHtml(item.id)}"><button class="work-card__open" type="button" data-open-portfolio="${escapeHtml(item.id)}"><div class="work-card__media">${item.imageUrl ? `<img data-portfolio-image="${escapeHtml(item.imageUrl)}" alt="">` : ""}<span class="work-badge ${badgeClass}">${badge}</span></div><div class="work-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(meta)}</small></div></button>${canReorder && item.status !== "archived" ? `<div class="work-order"><button type="button" data-move-portfolio="-1" aria-label="Поднять" ${index === 0 ? "disabled" : ""}>↑</button><button type="button" data-move-portfolio="1" aria-label="Опустить" ${index === portfolio.items.filter((row) => row.status !== "archived").length - 1 ? "disabled" : ""}>↓</button></div>` : ""}</article>`;
+    }).join("");
+    hydratePortfolioImages(root);
+  }
+
+  async function hydratePortfolioImages(root) {
+    for (const image of root.querySelectorAll("[data-portfolio-image]")) {
+      try {
+        const response = await request(image.dataset.portfolioImage);
+        if (!response.ok) throw new Error("image_failed");
+        const url = URL.createObjectURL(await response.blob());
+        attachmentObjectUrls.add(url);
+        image.src = url;
+      } catch { image.remove(); }
+    }
+  }
+
+  async function loadPortfolio() {
+    if (portfolio.loading) return;
+    portfolio.loading = true;
+    $("#portfolioError").hidden = true;
+    try {
+      const query = new URLSearchParams();
+      if (portfolio.status) query.set("status", portfolio.status);
+      if (portfolio.q) query.set("q", portfolio.q);
+      const result = await api(`/api/crm/portfolio?${query}`);
+      portfolio.items = result.items;
+      portfolio.counts = result.counts || {};
+      renderPortfolio();
+    } catch (error) {
+      $("#portfolioError").hidden = false;
+      $("#portfolioError").textContent = humanError(error);
+    } finally { portfolio.loading = false; }
+  }
+
+  function clearPortfolioForm() {
+    portfolio.current = null;
+    portfolio.imageDataUrl = null;
+    portfolio.dirty = false;
+    $("#portfolioForm").reset();
+    $("#portfolioPreview").innerHTML = "<span>Добавьте изображение</span>";
+    $("#archivePortfolioButton").hidden = true;
+    $("#publishPortfolioButton").textContent = "Опубликовать";
+    $("#portfolioFeedback").textContent = "";
+  }
+
+  async function showPortfolioImage(item) {
+    if (!item?.imageUrl) { $("#portfolioPreview").innerHTML = "<span>Добавьте изображение</span>"; return; }
+    try {
+      const response = await request(item.imageUrl);
+      if (!response.ok) throw new Error("image_failed");
+      const url = URL.createObjectURL(await response.blob());
+      attachmentObjectUrls.add(url);
+      $("#portfolioPreview").innerHTML = `<img src="${url}" alt="">`;
+    } catch { $("#portfolioPreview").innerHTML = "<span>Изображение недоступно</span>"; }
+  }
+
+  async function openPortfolioEditor(id = null, historyMode = "push") {
+    clearPortfolioForm();
+    document.body.classList.remove("section-portfolio");
+    document.body.classList.add("portfolio-edit");
+    $("#portfolioSection").hidden = true;
+    $("#portfolioEditor").hidden = false;
+    if (telegramBackButtonSupported) tg.BackButton.show();
+    if (id) {
+      try {
+        const result = await api(`/api/crm/portfolio/${encodeURIComponent(id)}`);
+        portfolio.current = result.item;
+        for (const name of ["title", "caption", "altText", "bodyZone", "style", "year"]) $("#portfolioForm").elements[name].value = result.item[name] || "";
+        $("#archivePortfolioButton").hidden = result.item.status === "archived";
+        $("#publishPortfolioButton").textContent = result.item.status === "published" ? "Снять с публикации" : "Опубликовать";
+        await showPortfolioImage(result.item);
+      } catch (error) { setPortfolioFeedback(humanError(error), true); }
+    }
+    portfolio.dirty = false;
+    updateSectionUrl("portfolio", id || "new", historyMode);
+    window.scrollTo({ top:0, behavior:"auto" });
+  }
+
+  function setPortfolioFeedback(text, error = false) {
+    const node = $("#portfolioFeedback");
+    node.textContent = text;
+    node.classList.toggle("error", error);
+  }
+
+  function portfolioPayload() {
+    const form = new FormData($("#portfolioForm"));
+    return {
+      title:String(form.get("title") || "").trim(), caption:String(form.get("caption") || "").trim(),
+      altText:String(form.get("altText") || "").trim(), bodyZone:String(form.get("bodyZone") || "").trim(),
+      style:String(form.get("style") || "").trim(), year:form.get("year") || null,
+      ...(portfolio.imageDataUrl ? { imageDataUrl:portfolio.imageDataUrl } : {})
+    };
+  }
+
+  async function savePortfolio() {
+    setPortfolioFeedback("Сохраняем…");
+    const path = portfolio.current ? `/api/crm/portfolio/${portfolio.current.id}` : "/api/crm/portfolio";
+    const method = portfolio.current ? "PATCH" : "POST";
+    try {
+      const result = await api(path, { method, body:JSON.stringify(portfolioPayload()) });
+      portfolio.current = result.item;
+      portfolio.imageDataUrl = null;
+      portfolio.dirty = false;
+      $("#archivePortfolioButton").hidden = false;
+      updateSectionUrl("portfolio", result.item.id, "replace");
+      setPortfolioFeedback("Сохранено");
+      await loadPortfolio();
+      return result.item;
+    } catch (error) { setPortfolioFeedback(humanError(error), true); return null; }
+  }
+
+  async function closePortfolioEditor(historyMode = "push") {
+    if (portfolio.dirty && !window.confirm("Не сохранять изменения?")) return;
+    portfolio.dirty = false;
+    if (telegramBackButtonSupported) tg.BackButton.hide();
+    await showSection("portfolio", { historyMode });
+    await loadPortfolio();
+  }
+
+  async function togglePortfolioPublish() {
+    let item = portfolio.current;
+    if (!item || portfolio.dirty) item = await savePortfolio();
+    if (!item) return;
+    const action = item.status === "published" ? "unpublish" : "publish";
+    try {
+      const result = await api(`/api/crm/portfolio/${item.id}/${action}`, { method:"POST" });
+      portfolio.current = result.item;
+      $("#publishPortfolioButton").textContent = result.item.status === "published" ? "Снять с публикации" : "Опубликовать";
+      setPortfolioFeedback(result.item.status === "published" ? "Опубликовано на сайте" : "Снято с публикации");
+      await loadPortfolio();
+    } catch (error) { setPortfolioFeedback(humanError(error), true); }
+  }
+
+  async function movePortfolio(itemId, delta) {
+    const active = portfolio.items.filter((item) => item.status !== "archived");
+    const index = active.findIndex((item) => item.id === itemId);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= active.length) return;
+    [active[index], active[target]] = [active[target], active[index]];
+    try {
+      await api("/api/crm/portfolio/reorder", { method:"POST", body:JSON.stringify({ ids:active.map((item) => item.id) }) });
+      await loadPortfolio();
+    } catch (error) { setSync(humanError(error), true); }
+  }
+
+  async function handleBack() {
+    if (document.body.classList.contains("portfolio-edit")) return closePortfolioEditor();
+    if (document.body.classList.contains("detail-open")) return leaveDetailView();
+  }
+
   async function boot() {
     tg?.ready(); tg?.expand();
     $("#authState").hidden = true;
@@ -441,7 +648,10 @@
       $("#workspace").hidden = false;
       renderFilters();
       await load();
-      if (requestedCode) await select(requestedCode, { historyMode:"replace" });
+      const initial = new URLSearchParams(location.search);
+      if (initial.get("section") === "portfolio" || initial.get("item")) await showSection("portfolio", { historyMode:"none", itemId:initial.get("item") && initial.get("item") !== "new" ? initial.get("item") : (initial.get("item") === "new" ? null : null) });
+      if (initial.get("item") === "new") await openPortfolioEditor(null, "none");
+      else if (requestedCode) await select(requestedCode, { historyMode:"replace" });
     } catch (error) {
       if ([401, 403].includes(error.status)) {
         $("#workspace").hidden = true;
@@ -465,6 +675,7 @@
       await boot();
       return;
     }
+    if (document.body.classList.contains("section-portfolio")) { await loadPortfolio(); return; }
     const selectedId = state.selectedId;
     await load(false);
     if (selectedId) await select(selectedId, { historyMode:"none" });
@@ -482,11 +693,42 @@
   $("#searchInput").addEventListener("input", (event) => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.q = event.target.value.trim(); state.cursor = null; load(); }, 250); });
   $("#loadMore").addEventListener("click", () => { if (!state.loading) load(true); });
   $("#refreshButton").addEventListener("click", refreshWorkspace);
-  if (telegramBackButtonSupported) tg.BackButton.onClick(() => leaveDetailView());
-  window.addEventListener("popstate", () => {
-    const requestCode = new URLSearchParams(location.search).get("request");
+  document.querySelectorAll("[data-section]").forEach((button) => button.addEventListener("click", () => showSection(button.dataset.section)));
+  $("#newPortfolioButton").addEventListener("click", () => openPortfolioEditor());
+  $("#portfolioBack").addEventListener("click", () => closePortfolioEditor());
+  $("#portfolioForm").addEventListener("input", () => { portfolio.dirty = true; setPortfolioFeedback(""); });
+  $("#portfolioForm").addEventListener("submit", async (event) => { event.preventDefault(); await savePortfolio(); });
+  $("#portfolioImage").addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    if (!file || !["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 8 * 1024 * 1024) { setPortfolioFeedback("Выберите JPG, PNG или WebP до 8 МБ.", true); return; }
+    const reader = new FileReader();
+    reader.onload = () => { portfolio.imageDataUrl = String(reader.result); portfolio.dirty = true; $("#portfolioPreview").innerHTML = `<img src="${portfolio.imageDataUrl}" alt="">`; setPortfolioFeedback(""); };
+    reader.readAsDataURL(file);
+  });
+  $("#publishPortfolioButton").addEventListener("click", togglePortfolioPublish);
+  $("#archivePortfolioButton").addEventListener("click", async () => {
+    if (!portfolio.current || !window.confirm("Переместить работу в архив?")) return;
+    try { await api(`/api/crm/portfolio/${portfolio.current.id}/archive`, { method:"POST" }); portfolio.dirty = false; await closePortfolioEditor(); } catch (error) { setPortfolioFeedback(humanError(error), true); }
+  });
+  $("#portfolioFilters").addEventListener("click", (event) => { const button = event.target.closest("[data-portfolio-status]"); if (!button) return; portfolio.status = button.dataset.portfolioStatus; loadPortfolio(); });
+  $("#portfolioGrid").addEventListener("click", (event) => {
+    const open = event.target.closest("[data-open-portfolio]");
+    if (open) { openPortfolioEditor(open.dataset.openPortfolio); return; }
+    const move = event.target.closest("[data-move-portfolio]");
+    if (move) movePortfolio(move.closest("[data-portfolio-id]").dataset.portfolioId, Number(move.dataset.movePortfolio));
+  });
+  let portfolioSearchTimer;
+  $("#portfolioSearch").addEventListener("input", (event) => { clearTimeout(portfolioSearchTimer); portfolioSearchTimer = setTimeout(() => { portfolio.q = event.target.value.trim(); loadPortfolio(); }, 250); });
+  if (telegramBackButtonSupported) tg.BackButton.onClick(handleBack);
+  window.addEventListener("popstate", async () => {
+    const current = new URLSearchParams(location.search);
+    const item = current.get("item");
+    if (item) { await showSection("portfolio", { historyMode:"none" }); await openPortfolioEditor(item === "new" ? null : item, "none"); return; }
+    if (current.get("section") === "portfolio") { portfolio.dirty = false; await showSection("portfolio", { historyMode:"none" }); return; }
+    const requestCode = current.get("request");
+    await showSection("requests", { historyMode:"none" });
     if (requestCode) select(requestCode, { historyMode:"none" });
-    else leaveDetailView("none");
+    else if (document.body.classList.contains("detail-open")) leaveDetailView("none");
   });
   window.addEventListener("pagehide", releaseAttachmentUrls);
   boot();

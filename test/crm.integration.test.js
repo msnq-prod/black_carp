@@ -123,6 +123,36 @@ test("complete booking, bot, CRM, attachment and outbox flow", async () => {
   fs.rmSync(path.join(__dirname, "..", "uploads", "booking", created.requestId), { recursive:true, force:true });
 });
 
+test("portfolio drafts stay private and published work is editable from CRM", async () => {
+  const auth = { "X-Test-Master-Id":"100", "Content-Type":"application/json" };
+  const pixel = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL5WQAAAABJRU5ErkJggg==";
+  const createdResponse = await fetch(`${baseUrl}/api/crm/portfolio`, {
+    method:"POST", headers:auth,
+    body:JSON.stringify({ title:"Black Wave", caption:"Спина", altText:"Графическая татуировка", bodyZone:"Спина", style:"Графика", year:2026, imageDataUrl:pixel })
+  });
+  assert.equal(createdResponse.status, 201);
+  const created = (await createdResponse.json()).item;
+  assert.equal(created.status, "draft");
+  assert.equal((await (await fetch(`${baseUrl}/api/portfolio`)).json()).items.length, 0);
+  assert.equal((await fetch(`${baseUrl}${created.imageUrl}`)).status, 401);
+  assert.equal((await fetch(`${baseUrl}${created.imageUrl}`, { headers:{ "X-Test-Master-Id":"100" } })).status, 200);
+
+  const published = await fetch(`${baseUrl}/api/crm/portfolio/${created.id}/publish`, { method:"POST", headers:{ "X-Test-Master-Id":"100" } });
+  assert.equal(published.status, 200);
+  const publicItems = (await (await fetch(`${baseUrl}/api/portfolio`)).json()).items;
+  assert.equal(publicItems.length, 1);
+  assert.equal(publicItems[0].title, "Black Wave");
+  assert.equal((await fetch(`${baseUrl}${publicItems[0].imageUrl}`)).status, 200);
+
+  const updated = await fetch(`${baseUrl}/api/crm/portfolio/${created.id}`, { method:"PATCH", headers:auth, body:JSON.stringify({ caption:"Обновлено" }) });
+  assert.equal(updated.status, 200);
+  assert.equal((await updated.json()).item.caption, "Обновлено");
+  const archived = await fetch(`${baseUrl}/api/crm/portfolio/${created.id}/archive`, { method:"POST", headers:{ "X-Test-Master-Id":"100" } });
+  assert.equal(archived.status, 200);
+  assert.equal((await (await fetch(`${baseUrl}/api/portfolio`)).json()).items.length, 0);
+  fs.rmSync(path.join(__dirname, "..", "uploads", "portfolio", `${created.id}.png`), { force:true });
+});
+
 test("Telegram start cannot rebind a booking to another user", async () => {
   const headers = { "Content-Type":"application/json", "X-Telegram-Bot-Api-Secret-Token":"test-secret" };
   const response = await fetch(`${baseUrl}/telegram/webhook`, {
@@ -374,9 +404,10 @@ test("migration upgrades v1 outbox and rejects a newer database version", () => 
     });
     assert.equal(upgraded.status, 0, upgraded.stderr);
     const migrated = new DatabaseSync(v1Path);
-    assert.equal(migrated.prepare("PRAGMA user_version").get().user_version, 2);
+    assert.equal(migrated.prepare("PRAGMA user_version").get().user_version, 3);
     const columns = new Set(migrated.prepare("PRAGMA table_info(notification_outbox)").all().map((row) => row.name));
     assert.deepEqual(["payload_json", "claim_token", "claimed_at"].every((name) => columns.has(name)), true);
+    assert.equal(Boolean(migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='portfolio_items'").get()), true);
     migrated.close();
 
     const future = new DatabaseSync(futurePath);

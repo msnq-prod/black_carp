@@ -76,20 +76,40 @@ const works = [
   }
 ];
 
-worksFeed.innerHTML = works
-  .map(
-    (work, index) => `
+function renderWorks(items) {
+  worksFeed.innerHTML = items
+    .map(
+      (work, index) => `
       <article class="work-slide">
-        <img src="${work.image}" alt="${work.alt}" loading="${index === 0 ? "eager" : "lazy"}" />
-        <div class="slide-index">${String(index + 1).padStart(2, "0")} / ${String(works.length).padStart(2, "0")}</div>
+        <img src="${escapeHtml(work.image)}" alt="${escapeHtml(work.alt)}" loading="${index === 0 ? "eager" : "lazy"}" />
+        <div class="slide-index">${String(index + 1).padStart(2, "0")} / ${String(items.length).padStart(2, "0")}</div>
         <div class="slide-caption">
-          <h2>${work.title}</h2>
-          <p>${work.meta}</p>
+          <h2>${escapeHtml(work.title)}</h2>
+          <p>${escapeHtml(work.meta)}</p>
         </div>
       </article>
     `
-  )
-  .join("");
+    )
+    .join("");
+}
+
+renderWorks(works);
+
+async function loadPublishedWorks() {
+  try {
+    const response = await fetch(`${bookingApiBase}/api/portfolio`, { headers:{ "Accept":"application/json" } });
+    const data = await response.json();
+    if (!response.ok || !data.ok || !Array.isArray(data.items) || !data.items.length) return;
+    renderWorks(data.items.map((item) => ({
+      title:item.title,
+      meta:[item.bodyZone, item.style, item.year].filter(Boolean).join(" / ") || item.caption || "Black Carp",
+      image:item.imageUrl,
+      alt:item.altText
+    })));
+  } catch {}
+}
+
+loadPublishedWorks();
 
 function setView(name) {
   views.forEach((view) => {

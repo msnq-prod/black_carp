@@ -11,14 +11,16 @@ const buildRevision = readBuildRevision();
 
 const dataDir = path.join(rootDir, "data");
 const uploadsDir = path.join(rootDir, "uploads", "booking");
+const portfolioUploadsDir = path.join(rootDir, "uploads", "portfolio");
 const dbPath = process.env.DB_PATH || path.join(dataDir, "black-carp.sqlite");
 const port = Number(process.env.PORT || 3001);
 const botUsername = (process.env.BOT_USERNAME || "blackcarp_bot").replace(/^@/, "");
 const host = process.env.HOST || (fs.existsSync("/.dockerenv") ? "0.0.0.0" : "127.0.0.1");
 const trustProxy = configuredTrustProxy();
-const LATEST_SCHEMA_VERSION = 2;
+const LATEST_SCHEMA_VERSION = 3;
 const bookingJson = express.json({ limit: process.env.JSON_LIMIT || "25mb" });
 const crmJson = express.json({ limit: "32kb" });
+const portfolioJson = express.json({ limit: "12mb" });
 const webhookJson = express.json({ limit: "1mb" });
 const CRM_STATUSES = ["new", "in_review", "need_details", "approved", "scheduled", "done", "cancelled"];
 const CRM_TRANSITIONS = {
@@ -34,6 +36,7 @@ const bookingRateBuckets = new Map();
 
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(uploadsDir, { recursive: true });
+fs.mkdirSync(portfolioUploadsDir, { recursive: true });
 
 const databaseExisted = fs.existsSync(dbPath);
 const db = new DatabaseSync(dbPath);
@@ -299,6 +302,106 @@ app.get("/api/crm/requests/:id/attachments/:attachmentId", requireCrmAuth, (req,
   fs.createReadStream(file).pipe(res);
 });
 
+app.get("/api/portfolio", (req, res) => {
+  const items = db.prepare("SELECT * FROM portfolio_items WHERE status='published' ORDER BY sort_order ASC, created_at ASC").all();
+  res.json({ ok:true, items:items.map(portfolioItem) });
+});
+
+app.get("/api/crm/portfolio", requireCrmAuth, (req, res) => {
+  const status = String(req.query.status || "").trim();
+  const q = normalizeShortText(req.query.q, 120);
+  if (status && !["draft", "published", "archived"].includes(status)) return res.status(400).json({ ok:false, error:"invalid_status" });
+  const conditions = [];
+  const values = [];
+  if (status) { conditions.push("status=?"); values.push(status); }
+  if (q) { conditions.push("(title LIKE ? ESCAPE '\\' OR body_zone LIKE ? ESCAPE '\\')"); values.push(`%${escapeLike(q)}%`, `%${escapeLike(q)}%`); }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const rows = db.prepare(`SELECT * FROM portfolio_items ${where} ORDER BY CASE status WHEN 'draft' THEN 0 WHEN 'published' THEN 1 ELSE 2 END, sort_order ASC, updated_at DESC`).all(...values);
+  const counts = Object.fromEntries(db.prepare("SELECT status, COUNT(*) AS count FROM portfolio_items GROUP BY status").all().map((row) => [row.status, Number(row.count)]));
+  res.json({ ok:true, items:rows.map((row) => portfolioItem(row, true)), counts });
+});
+
+app.post("/api/crm/portfolio", requireCrmAuth, portfolioJson, (req, res) => {
+  try {
+    const now = new Date().toISOString();
+    const id = `work_${crypto.randomUUID()}`;
+    const input = validatePortfolioInput(req.body, { partial:false });
+    if (input.error) return res.status(400).json({ ok:false, error:input.error });
+    const image = req.body?.imageDataUrl ? savePortfolioImage(id, req.body.imageDataUrl) : null;
+    const sortOrder = Number(db.prepare("SELECT COALESCE(MAX(sort_order), -1) + 1 AS value FROM portfolio_items").get().value);
+    const slug = uniquePortfolioSlug(input.value.title || "work");
+    db.prepare(`INSERT INTO portfolio_items (id, slug, title, caption, alt_text, body_zone, style, year, status, sort_order, image_path, mime_type, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`)
+      .run(id, slug, input.value.title, input.value.caption, input.value.altText, input.value.bodyZone, input.value.style, input.value.year, sortOrder, image?.filePath || null, image?.mimeType || null, now, now);
+    appendPortfolioActivity(id, req.master.telegramId, "created", null);
+    res.status(201).json({ ok:true, item:portfolioItem(db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(id), true) });
+  } catch (error) {
+    if (error?.code === "invalid_portfolio_image") return res.status(400).json({ ok:false, error:error.code });
+    console.error("portfolio_create_error", error);
+    res.status(500).json({ ok:false, error:"internal_error" });
+  }
+});
+
+app.get("/api/crm/portfolio/:id", requireCrmAuth, (req, res) => {
+  const row = db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(req.params.id);
+  if (!row) return res.status(404).json({ ok:false, error:"not_found" });
+  res.json({ ok:true, item:portfolioItem(row, true) });
+});
+
+app.get("/api/crm/portfolio/:id/image", requireCrmAuth, (req, res) => {
+  const row = db.prepare("SELECT image_path, mime_type FROM portfolio_items WHERE id=?").get(req.params.id);
+  const file = row?.image_path ? absolutePortfolioPath(row.image_path) : null;
+  if (!file || !fs.existsSync(file)) return res.status(404).end();
+  res.setHeader("Content-Type", row.mime_type);
+  res.setHeader("Cache-Control", "private, no-store");
+  fs.createReadStream(file).pipe(res);
+});
+
+app.patch("/api/crm/portfolio/:id", requireCrmAuth, portfolioJson, (req, res) => {
+  try {
+    const row = db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(req.params.id);
+    if (!row) return res.status(404).json({ ok:false, error:"not_found" });
+    if (row.status === "archived") return res.status(409).json({ ok:false, error:"archived_item" });
+    const input = validatePortfolioInput(req.body, { partial:true, current:row });
+    if (input.error) return res.status(400).json({ ok:false, error:input.error });
+    let image = null;
+    if (req.body?.imageDataUrl) image = savePortfolioImage(row.id, req.body.imageDataUrl);
+    const now = new Date().toISOString();
+    db.prepare(`UPDATE portfolio_items SET title=?, caption=?, alt_text=?, body_zone=?, style=?, year=?, image_path=?, mime_type=?, updated_at=? WHERE id=?`)
+      .run(input.value.title, input.value.caption, input.value.altText, input.value.bodyZone, input.value.style, input.value.year, image?.filePath || row.image_path, image?.mimeType || row.mime_type, now, row.id);
+    appendPortfolioActivity(row.id, req.master.telegramId, "updated", null);
+    res.json({ ok:true, item:portfolioItem(db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(row.id), true) });
+  } catch (error) {
+    if (error?.code === "invalid_portfolio_image") return res.status(400).json({ ok:false, error:error.code });
+    console.error("portfolio_update_error", error);
+    res.status(500).json({ ok:false, error:"internal_error" });
+  }
+});
+
+for (const [action, nextStatus] of [["publish", "published"], ["unpublish", "draft"], ["archive", "archived"]]) {
+  app.post(`/api/crm/portfolio/:id/${action}`, requireCrmAuth, (req, res) => {
+    const row = db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(req.params.id);
+    if (!row) return res.status(404).json({ ok:false, error:"not_found" });
+    if (action === "publish" && (!row.title || !row.alt_text || !row.image_path)) return res.status(409).json({ ok:false, error:"item_incomplete" });
+    const now = new Date().toISOString();
+    db.prepare("UPDATE portfolio_items SET status=?, published_at=?, updated_at=? WHERE id=?")
+      .run(nextStatus, nextStatus === "published" ? (row.published_at || now) : null, now, row.id);
+    appendPortfolioActivity(row.id, req.master.telegramId, action, { from:row.status, to:nextStatus });
+    res.json({ ok:true, item:portfolioItem(db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(row.id), true) });
+  });
+}
+
+app.post("/api/crm/portfolio/reorder", requireCrmAuth, crmJson, (req, res) => {
+  const ids = req.body?.ids;
+  if (!Array.isArray(ids) || !ids.length || new Set(ids).size !== ids.length || ids.some((id) => typeof id !== "string")) return res.status(400).json({ ok:false, error:"invalid_order" });
+  const existing = db.prepare(`SELECT id FROM portfolio_items WHERE status!='archived'`).all().map((row) => row.id);
+  if (existing.length !== ids.length || existing.some((id) => !ids.includes(id))) return res.status(409).json({ ok:false, error:"order_conflict" });
+  const updateOrder = db.prepare("UPDATE portfolio_items SET sort_order=?, updated_at=? WHERE id=?");
+  const now = new Date().toISOString();
+  withTransaction(() => ids.forEach((id, index) => updateOrder.run(index, now, id)));
+  res.json({ ok:true });
+});
+
 app.post("/api/crm/outbox/:id/retry", requireCrmAuth, async (req, res) => {
   try {
     const outbox = db.prepare("SELECT id FROM notification_outbox WHERE id=?").get(req.params.id);
@@ -381,6 +484,17 @@ app.get("/api/booking/status/:publicCode", (req, res) => {
     telegramOpenedAt: row.telegram_opened_at,
     telegramUrl: telegramStartUrl(row.public_code)
   });
+});
+
+app.get("/uploads/portfolio/:filename", (req, res) => {
+  const filename = path.basename(String(req.params.filename || ""));
+  const relativePath = `uploads/portfolio/${filename}`;
+  const item = db.prepare("SELECT mime_type FROM portfolio_items WHERE image_path=? AND status='published'").get(relativePath);
+  const absolutePath = path.join(portfolioUploadsDir, filename);
+  if (!item || !fs.existsSync(absolutePath)) return res.status(404).end();
+  res.setHeader("Content-Type", item.mime_type);
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  fs.createReadStream(absolutePath).pipe(res);
 });
 
 app.use("/assets", express.static(path.join(rootDir, "assets")));
@@ -1132,6 +1246,7 @@ function runMigrations(database) {
   try {
     if (currentVersion < 1) migrateToVersion1(database);
     if (currentVersion < 2) migrateToVersion2(database);
+    if (currentVersion < 3) migrateToVersion3(database);
     database.exec(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}; COMMIT`);
   } catch (error) {
     try { database.exec("ROLLBACK"); } catch {}
@@ -1223,6 +1338,38 @@ function migrateToVersion2(database) {
   ]) {
     if (!columns.has(name)) database.exec(`ALTER TABLE notification_outbox ADD COLUMN ${name} ${definition}`);
   }
+}
+
+function migrateToVersion3(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS portfolio_items (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      caption TEXT,
+      alt_text TEXT NOT NULL DEFAULT '',
+      body_zone TEXT,
+      style TEXT,
+      year INTEGER,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published','archived')),
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      image_path TEXT,
+      mime_type TEXT,
+      published_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS portfolio_activity (
+      id TEXT PRIMARY KEY,
+      portfolio_item_id TEXT NOT NULL REFERENCES portfolio_items(id) ON DELETE CASCADE,
+      master_telegram_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      payload_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_portfolio_items_status_order ON portfolio_items(status, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_portfolio_activity_item ON portfolio_activity(portfolio_item_id, created_at);
+  `);
 }
 
 function backupDatabaseBeforeMigration(database, existed) {
@@ -1386,6 +1533,81 @@ function crmDetail(row) {
   };
 }
 
+function portfolioItem(row, crm = false) {
+  return {
+    id:row.id,
+    slug:row.slug,
+    title:row.title,
+    caption:row.caption || "",
+    altText:row.alt_text || "",
+    bodyZone:row.body_zone || "",
+    style:row.style || "",
+    year:row.year || null,
+    status:row.status,
+    sortOrder:Number(row.sort_order),
+    imageUrl:row.image_path ? (crm ? `/api/crm/portfolio/${row.id}/image?v=${encodeURIComponent(row.updated_at)}` : `/${row.image_path}`) : null,
+    publishedAt:row.published_at || null,
+    createdAt:row.created_at,
+    updatedAt:row.updated_at
+  };
+}
+
+function validatePortfolioInput(payload, { partial, current } = {}) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return { error:"invalid_payload" };
+  const source = current || {};
+  const title = payload.title === undefined && partial ? source.title : normalizeShortText(payload.title, 100);
+  const caption = payload.caption === undefined && partial ? source.caption : normalizeShortText(payload.caption, 300);
+  const altText = payload.altText === undefined && partial ? source.alt_text : normalizeShortText(payload.altText, 200);
+  const bodyZone = payload.bodyZone === undefined && partial ? source.body_zone : normalizeShortText(payload.bodyZone, 80);
+  const style = payload.style === undefined && partial ? source.style : normalizeShortText(payload.style, 80);
+  const rawYear = payload.year === undefined && partial ? source.year : payload.year;
+  const year = rawYear === null || rawYear === "" || rawYear === undefined ? null : Number(rawYear);
+  if (!title || title.length < 2) return { error:"title_required" };
+  if (year !== null && (!Number.isInteger(year) || year < 1900 || year > new Date().getFullYear() + 1)) return { error:"invalid_year" };
+  return { value:{ title, caption:caption || null, altText:altText || "", bodyZone:bodyZone || null, style:style || null, year } };
+}
+
+function savePortfolioImage(itemId, dataUrl) {
+  const parsed = parseDataUrl(dataUrl);
+  if (!parsed || parsed.buffer.length > 8 * 1024 * 1024 || !hasImageSignature(parsed.buffer, parsed.mimeType)) {
+    const error = new Error("invalid_portfolio_image");
+    error.code = "invalid_portfolio_image";
+    throw error;
+  }
+  for (const extension of ["jpg", "png", "webp"]) fs.rmSync(path.join(portfolioUploadsDir, `${itemId}.${extension}`), { force:true });
+  const filename = `${itemId}.${mimeExtension(parsed.mimeType)}`;
+  const absolutePath = path.join(portfolioUploadsDir, filename);
+  fs.writeFileSync(absolutePath, parsed.buffer, { mode:0o600 });
+  return { filePath:path.relative(rootDir, absolutePath).replace(/\\/g, "/"), mimeType:parsed.mimeType };
+}
+
+function hasImageSignature(buffer, mimeType) {
+  if (mimeType === "image/png") return buffer.length > 8 && buffer.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+  if (mimeType === "image/jpeg") return buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer.at(-2) === 0xff && buffer.at(-1) === 0xd9;
+  if (mimeType === "image/webp") return buffer.length > 12 && buffer.subarray(0, 4).toString() === "RIFF" && buffer.subarray(8, 12).toString() === "WEBP";
+  return false;
+}
+
+function uniquePortfolioSlug(title) {
+  const base = String(title || "work").toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "work";
+  for (let index = 0; index < 100; index += 1) {
+    const slug = index ? `${base}-${index + 1}` : base;
+    if (!db.prepare("SELECT 1 FROM portfolio_items WHERE slug=?").get(slug)) return slug;
+  }
+  return `${base}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function appendPortfolioActivity(itemId, masterTelegramId, eventType, payload) {
+  db.prepare("INSERT INTO portfolio_activity (id, portfolio_item_id, master_telegram_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(`pact_${crypto.randomUUID()}`, itemId, String(masterTelegramId), eventType, payload ? JSON.stringify(payload) : null, new Date().toISOString());
+}
+
+function absolutePortfolioPath(relativePath) {
+  const absolute = path.resolve(rootDir, String(relativePath || ""));
+  const root = path.resolve(portfolioUploadsDir) + path.sep;
+  return absolute.startsWith(root) ? absolute : null;
+}
+
 function appendCrmActivity(requestId, actorType, actorId, eventType, payload) {
   const activityId = `act_${crypto.randomUUID()}`;
   db.prepare("INSERT INTO crm_activity (id, request_id, actor_type, actor_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -1444,7 +1666,7 @@ function cleanupRequestFiles(requestId) {
 }
 
 function hardenRuntimePermissions() {
-  for (const directory of [dataDir, uploadsDir]) {
+  for (const directory of [dataDir, uploadsDir, portfolioUploadsDir]) {
     fs.chmodSync(directory, 0o700);
     hardenTree(directory);
   }
