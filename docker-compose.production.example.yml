@@ -1,6 +1,6 @@
 services:
   black-carp-init:
-    image: black-carp:${BLACK_CARP_RELEASE_SHA:-local}
+    image: ${BLACK_CARP_IMAGE:-black-carp:${BLACK_CARP_RELEASE_SHA:-local}}
     user: "0:0"
     restart: "no"
     environment:
@@ -17,7 +17,7 @@ services:
       - ${BLACK_CARP_UPLOADS_DIR:-./uploads}:/app/uploads
 
   black-carp:
-    image: black-carp:${BLACK_CARP_RELEASE_SHA:-local}
+    image: ${BLACK_CARP_IMAGE:-black-carp:${BLACK_CARP_RELEASE_SHA:-local}}
     build:
       context: .
       args:
@@ -39,12 +39,16 @@ services:
       PORT: 3001
       RELEASE_SHA: ${BLACK_CARP_RELEASE_SHA:-local}
     ports:
-      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:${BLACK_CARP_BIND_PORT:-3001}:3001"
     volumes:
       - ${BLACK_CARP_DATA_DIR:-./data}:/app/data
       - ${BLACK_CARP_UPLOADS_DIR:-./uploads}:/app/uploads
     tmpfs:
       - /tmp:size=64m,mode=1777
+    networks:
+      default:
+        aliases:
+          - ${BLACK_CARP_SERVICE_ALIAS:-black-carp}
 
 networks:
   default:

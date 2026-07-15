@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Use Node.js
         uses: actions/setup-node@v4
@@ -62,6 +64,8 @@ jobs:
         run: |
           mkdir -p "$BLACK_CARP_DATA_DIR" "$BLACK_CARP_UPLOADS_DIR"
           docker compose config --quiet
+          mkdir -p "$RUNNER_TEMP/black-carp-candidate-data" "$RUNNER_TEMP/black-carp-candidate-uploads"
+          BLACK_CARP_CANDIDATE_BIND_PORT=3002 BLACK_CARP_CANDIDATE_DATA_DIR="$RUNNER_TEMP/black-carp-candidate-data" BLACK_CARP_CANDIDATE_UPLOADS_DIR="$RUNNER_TEMP/black-carp-candidate-uploads" BLACK_CARP_CANDIDATE_ENV_FILE="$BLACK_CARP_ENV_FILE" BLACK_CARP_CANDIDATE_DOCKER_NETWORK=black-carp-ci-candidate docker compose -p black-carp-ci-candidate -f docker-compose.production.candidate.example.yml config --quiet
           docker compose build --pull
           docker compose up --detach
           curl --fail --show-error --silent --retry 12 --retry-delay 2 --retry-all-errors http://127.0.0.1:3001/health > /dev/null
@@ -73,6 +77,30 @@ jobs:
           docker compose exec -T black-carp test -s /app/data/black-carp.sqlite
           docker compose restart black-carp
           curl --fail --show-error --silent --retry 12 --retry-delay 2 --retry-all-errors http://127.0.0.1:3001/health > /dev/null
+
+      - name: Smoke-test isolated candidate
+        env:
+          BLACK_CARP_CANDIDATE_BIND_PORT: 3002
+          BLACK_CARP_CANDIDATE_DATA_DIR: ${{ runner.temp }}/black-carp-candidate-data
+          BLACK_CARP_CANDIDATE_UPLOADS_DIR: ${{ runner.temp }}/black-carp-candidate-uploads
+          BLACK_CARP_CANDIDATE_ENV_FILE: ${{ github.workspace }}/.env.example
+          BLACK_CARP_CANDIDATE_DOCKER_NETWORK: black-carp-ci-candidate
+        run: |
+          docker compose -p black-carp-ci-candidate -f docker-compose.production.candidate.example.yml up --detach
+          curl --fail --show-error --silent --retry 12 --retry-delay 2 --retry-all-errors http://127.0.0.1:3002/health > "$RUNNER_TEMP/black-carp-candidate-health.json"
+          HEALTH_FILE="$RUNNER_TEMP/black-carp-candidate-health.json" node -e 'const fs=require("fs"); const body=JSON.parse(fs.readFileSync(process.env.HEALTH_FILE,"utf8")); if (!body.ok || body.release !== process.env.BLACK_CARP_RELEASE_SHA) process.exit(1)'
+          test "$(docker compose -p black-carp-ci-candidate -f docker-compose.production.candidate.example.yml exec -T black-carp-candidate id -u | tr -d '\r')" = "1000"
+          curl --fail --show-error --silent http://127.0.0.1:3001/health > /dev/null
+
+      - name: Stop candidate smoke
+        if: always()
+        env:
+          BLACK_CARP_CANDIDATE_BIND_PORT: 3002
+          BLACK_CARP_CANDIDATE_DATA_DIR: ${{ runner.temp }}/black-carp-candidate-data
+          BLACK_CARP_CANDIDATE_UPLOADS_DIR: ${{ runner.temp }}/black-carp-candidate-uploads
+          BLACK_CARP_CANDIDATE_ENV_FILE: ${{ github.workspace }}/.env.example
+          BLACK_CARP_CANDIDATE_DOCKER_NETWORK: black-carp-ci-candidate
+        run: docker compose -p black-carp-ci-candidate -f docker-compose.production.candidate.example.yml down --remove-orphans
 
       - name: Stop production smoke
         if: always()

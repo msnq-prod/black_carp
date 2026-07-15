@@ -42,13 +42,15 @@ Compose запускает отдельный одноразовый `black-carp
 
 ```bash
 export BLACK_CARP_RELEASE_SHA="$(git rev-parse HEAD)"
+export BLACK_CARP_IMAGE="ghcr.io/<owner>/<image>@sha256:<verified-digest>"
 export BLACK_CARP_DATA_DIR=/srv/data/black-carp
 export BLACK_CARP_UPLOADS_DIR=/srv/uploads/black-carp
 export BLACK_CARP_ENV_FILE=/srv/config/black-carp.env
 export BLACK_CARP_UID="$(id -u black-carp)"
 export BLACK_CARP_GID="$(id -g black-carp)"
 docker compose -f docker-compose.production.example.yml config --quiet
-docker compose -f docker-compose.production.example.yml up -d --build
+docker compose -f docker-compose.production.example.yml pull
+docker compose -f docker-compose.production.example.yml up -d --no-build
 ```
 
 Обычный `docker compose config` использовать в логах нельзя: он раскрывает значения из `env_file`. Для проверки применяется только `config --quiet`.
@@ -93,6 +95,21 @@ black-carp.art, www.black-carp.art {
 
 `TRUST_PROXY` должен точно совпадать с выделенным CIDR external network; значения `true` и числовой hop count запрещены. В эту сеть нельзя подключать недоверенные контейнеры. Порт `3001` нельзя публиковать наружу. Схема `127.0.0.1:3001` внутри Caddy-контейнера не поддерживается: loopback контейнера не является host loopback.
 
+Для smoke candidate используется отдельный `docker-compose.production.candidate.example.yml`. Он имеет другие service names, loopback-порт, сеть, каталоги и env-файл, поэтому не попадает в live Caddy upstream и не может изменить production SQLite/uploads. Candidate проверяет image и runtime, но не принимает реальные заявки и не вызывает Telegram readiness. Пример параметров:
+
+```bash
+export COMPOSE_PROJECT_NAME=black-carp-candidate
+export BLACK_CARP_RELEASE_SHA=<40-char-sha>
+export BLACK_CARP_CANDIDATE_BIND_PORT=3002
+export BLACK_CARP_CANDIDATE_DOCKER_NETWORK=black-carp-candidate-<sha>
+export BLACK_CARP_CANDIDATE_DATA_DIR=/srv/releases/<sha>/candidate-data
+export BLACK_CARP_CANDIDATE_UPLOADS_DIR=/srv/releases/<sha>/candidate-uploads
+export BLACK_CARP_CANDIDATE_ENV_FILE=/srv/releases/<sha>/candidate.env
+docker compose -f docker-compose.production.candidate.example.yml up -d
+```
+
+После candidate health/UI smoke stack удаляется. SQLite и локальные uploads не допускают безопасный blue-green с двумя writable-копиями: перед финальным cutover host script блокирует новые записи, создаёт свежий проверенный backup, останавливает старый app и запускает новый image с единственными live bind mounts. Это контролируемый stop/start с коротким окном недоступности; zero-downtime для текущего storage не заявляется.
+
 Если нужно оставить только статический placeholder, используется `root * /data/black-carp` и `file_server`, но booking API, CRM и Telegram webhook в таком режиме работать не будут.
 
 ## Проверка после деплоя
@@ -118,7 +135,7 @@ curl "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" \
 
 ## Важно
 
-`/usr/local/bin/black-carp-deploy <40-char-sha>` обязан развернуть ровно переданный commit: создать и проверить backup, собрать image с OCI revision label, запустить candidate, выполнить health/smoke и только затем переключить Caddy. Текущий пример Compose — single-slot: он не поддерживает параллельный candidate из-за фиксированного loopback-порта и service alias. Для атомарного переключения host script обязан использовать отдельный Compose override с уникальными портом, service alias и Caddy upstream; до такой проверки нельзя заявлять zero-downtime. Допустимый fallback — явно согласованный stop/start с окном недоступности и rollback. Скрипт обязан поставить trap и самостоятельно вернуть предыдущую ревизию при любом обрыве после переключения. Предыдущий image и backup сохраняются для rollback. `/usr/local/bin/black-carp-rollback <failed-sha>` обязан быть идемпотентным: ничего не менять, если failed SHA не был активирован, иначе вернуть предыдущую подтверждённую ревизию. Эти host scripts находятся вне репозитория и должны быть обновлены до включения workflow.
+`/usr/local/bin/black-carp-deploy <40-char-sha>` обязан развернуть ровно переданный commit: получить заранее собранный `BLACK_CARP_IMAGE` по digest (без rebuild на host), проверить его OCI revision label и `/app/REVISION`, создать и проверить backup, запустить изолированный candidate и выполнить health/UI smoke. Затем он переводит Caddy в maintenance, создаёт свежий backup, удаляет candidate, останавливает старый app и запускает новый image с единственными live bind mounts. Скрипт обязан поставить trap и самостоятельно вернуть предыдущую ревизию при любом обрыве cutover. Предыдущий image и backup сохраняются для rollback. `/usr/local/bin/black-carp-rollback <failed-sha>` обязан быть идемпотентным: ничего не менять, если failed SHA не был активирован, иначе вернуть предыдущую подтверждённую ревизию. Эти host scripts находятся вне репозитория и должны быть обновлены до включения workflow.
 
 Backup запускается не от root, а от выделенного пользователя `black-carp`; его UID/GID передаются Compose через `BLACK_CARP_UID`/`BLACK_CARP_GID`, поэтому он читает закрытые bind mounts. Cron явно задаёт production-пути `/srv/data/black-carp/black-carp.sqlite` и `/srv/uploads/black-carp`. `ops/backup.sh` сериализует запуски, проверяет SQLite, создаёт checksum и выполняет пробное восстановление. `BLACK_CARP_BACKUP_HOOK` может указывать на root-owned executable, который получает три аргумента — SQLite, uploads archive и checksum — и отправляет их в зашифрованное off-host хранилище.
 
