@@ -45,3 +45,12 @@
 - Node pin, health/readiness, graceful shutdown and deploy/rollback docs.
 
 Each cluster updates findings/progress/verification and is committed only after focused and broader checks pass.
+
+## Final P1 fix pass — 2026-07-12
+
+1. Public UX truth: explicit body side, reload-safe attachment disclosure, transition locking, reset correctness and honest fallback copy.
+2. CRM async ownership: request versions, stale-response rejection, preserved form drafts, timeout/retry states and attachment URL cleanup.
+3. Bot durability/security: client-message outbox, claim leases, rebind guard, pre-parse guards and explicit master identity.
+4. Release proof: schema v2 guard, portable tests, non-root volumes, Docker smoke, verified backup/restore and SHA-bound deploy/rollback contract.
+
+Local implementation is complete. Browser rerun, Docker build in GitHub and external host installation remain verification gates, not additional code scope.

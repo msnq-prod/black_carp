@@ -16,21 +16,25 @@ Production gaps реализованы в ветке `codex/crm-production-readi
 - [x] Recommendations updated
 - [x] Needs-more-research resolved or deferred
 - [x] Audit Stop Gates passed
-- [ ] Audit artifacts committed
-- [ ] Implementation branch created
-- [ ] Confirmed fixes implemented
-- [ ] Full verification complete
-- [ ] Implementation committed
+- [x] Audit artifacts committed (`04124d5`)
+- [x] Implementation branch created
+- [x] Confirmed product fixes implemented
+- [x] Baseline verification complete
+- [x] Baseline implementation committed (`4fe2382`)
+- [x] Release-hardening follow-up prepared for commit
+- [ ] GitHub Docker and backup/restore smoke green
+- [ ] Host deploy/rollback contract installed
+- [ ] Production deploy and real Telegram smoke complete
 - [ ] Goal Stop Gates passed
 
 ## Active Wave
 
-None. Audit synthesis complete.
+Local release hardening complete: P1 fixes, Docker ownership/runtime, CI image smoke, verified backups, embedded revision, Telegram/webhook readiness probe and SHA-bound deploy contract.
 
 ## Next
 
-Commit audit artifacts only, then create the implementation branch.
+Run GitHub CI, install external deploy/rollback and backup hooks, then perform the authorized production rollout.
 
 ## Blockers
 
-None.
+Production rollout requires current host access, rotated secrets, SSH fingerprint, Caddy network change and off-host backup destination.

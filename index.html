@@ -7,7 +7,7 @@
     <meta name="black-carp-bot-username" content="blackcarp_bot">
     <title>Black Carp — авторская графика</title>
     <link rel="preload" as="image" href="assets/media/work-hero-01.jpg">
-    <link rel="stylesheet" href="styles.css?v=booking-20260704a">
+    <link rel="stylesheet" href="styles.css?v=booking-20260715a">
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -306,6 +306,14 @@
               <div class="wizard-slide-content body-menu-step">
                 <h3 class="wizard-question-title">Где будет тату?</h3>
 
+                <fieldset class="body-view-fieldset">
+                  <legend>Сторона тела</legend>
+                  <div class="body-view-toggle">
+                    <button type="button" class="body-view-option is-active" data-body-view="front" aria-pressed="true">Спереди</button>
+                    <button type="button" class="body-view-option" data-body-view="back" aria-pressed="false">Сзади</button>
+                  </div>
+                </fieldset>
+
                 <div class="luxury-body-menu" id="luxuryBodyMenu"><div class="luxury-zone-group"><button type="button" class="luxury-zone-btn "><span>Голова и Шея</span><svg class="chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"></path></svg></button><div class="luxury-subzones-container" style="display: none;"><button type="button" class="luxury-subzone-btn ">Шея</button><button type="button" class="luxury-subzone-btn ">За ухом</button><button type="button" class="luxury-subzone-btn ">Голова</button></div></div><div class="luxury-zone-group"><button type="button" class="luxury-zone-btn "><span>Грудь и Живот</span><svg class="chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"></path></svg></button><div class="luxury-subzones-container" style="display: none;"><button type="button" class="luxury-subzone-btn ">Грудь</button><button type="button" class="luxury-subzone-btn ">Ключицы</button><button type="button" class="luxury-subzone-btn ">Ребра</button><button type="button" class="luxury-subzone-btn ">Живот</button></div></div><div class="luxury-zone-group"><button type="button" class="luxury-zone-btn "><span>Руки</span><svg class="chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"></path></svg></button><div class="luxury-subzones-container" style="display: none;"><button type="button" class="luxury-subzone-btn ">Плечо</button><button type="button" class="luxury-subzone-btn ">Предплечье</button><button type="button" class="luxury-subzone-btn ">Бицепс</button><button type="button" class="luxury-subzone-btn ">Кисть</button><button type="button" class="luxury-subzone-btn ">Рукав</button></div></div><div class="luxury-zone-group"><button type="button" class="luxury-zone-btn "><span>Ноги</span><svg class="chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"></path></svg></button><div class="luxury-subzones-container" style="display: none;"><button type="button" class="luxury-subzone-btn ">Бедро</button><button type="button" class="luxury-subzone-btn ">Икра / Голень</button><button type="button" class="luxury-subzone-btn ">Колено</button><button type="button" class="luxury-subzone-btn ">Лодыжка</button><button type="button" class="luxury-subzone-btn ">Штанина</button></div></div></div>
 
               </div>
@@ -378,6 +386,7 @@
                   <div class="uploader-previews-container" id="refPreviewsContainer" style="display: none;">
                     <!-- Превью загруженных референсов -->
                   </div>
+                  <p class="upload-restore-notice" id="refRestoreNotice" role="status" hidden></p>
                 </div>
 
                 <button type="button" class="line-cta" id="ideaNextBtn">
@@ -535,7 +544,7 @@
       </button>
     </nav>
 
-    <script src="script.js?v=booking-20260703g"></script>
+    <script src="script.js?v=booking-20260715a"></script>
 
 
 </body></html>

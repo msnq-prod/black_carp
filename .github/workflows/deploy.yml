@@ -1,22 +1,36 @@
 name: Deploy
 
+permissions:
+  contents: read
+
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Validate
+    types:
+      - completed
 
 concurrency:
   group: black-carp-deploy
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
 
       - name: Use Node.js
         uses: actions/setup-node@v4
@@ -26,21 +40,73 @@ jobs:
 
       - name: Validate release
         run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$RELEASE_SHA"
           npm ci
           npm run check
           npm test
 
+      - name: Prepare verified SSH connection
+        id: ssh
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_SSH_FINGERPRINT: ${{ secrets.SERVER_SSH_FINGERPRINT }}
+          DEPLOY_PROBE_TOKEN: ${{ secrets.DEPLOY_PROBE_TOKEN }}
+        run: |
+          test -n "$SERVER_HOST"
+          test -n "$SERVER_USER"
+          test -n "$SERVER_SSH_KEY"
+          test -n "$SERVER_SSH_FINGERPRINT"
+          test -n "$DEPLOY_PROBE_TOKEN"
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/black-carp-deploy"
+          ssh-keyscan -T 10 "$SERVER_HOST" > "$HOME/.ssh/black-carp-scanned-hosts"
+          test -s "$HOME/.ssh/black-carp-scanned-hosts"
+          : > "$HOME/.ssh/black-carp-known-hosts"
+          while IFS= read -r host_key; do
+            fingerprint="$(printf '%s\n' "$host_key" | ssh-keygen -lf - -E sha256 | awk '{print $2}')"
+            if [[ "$fingerprint" == "$SERVER_SSH_FINGERPRINT" ]]; then
+              printf '%s\n' "$host_key" >> "$HOME/.ssh/black-carp-known-hosts"
+            fi
+          done < "$HOME/.ssh/black-carp-scanned-hosts"
+          test -s "$HOME/.ssh/black-carp-known-hosts"
+
       - name: Deploy on server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script_stop: true
-          script: |
-            /usr/local/bin/black-carp-deploy
+        id: deploy
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: >-
+          ssh -i "$HOME/.ssh/black-carp-deploy"
+          -o BatchMode=yes
+          -o StrictHostKeyChecking=yes
+          -o UserKnownHostsFile="$HOME/.ssh/black-carp-known-hosts"
+          "$SERVER_USER@$SERVER_HOST"
+          "/usr/local/bin/black-carp-deploy '$RELEASE_SHA'"
 
       - name: Verify production
+        env:
+          DEPLOY_PROBE_TOKEN: ${{ secrets.DEPLOY_PROBE_TOKEN }}
         run: |
-          curl --fail --show-error --silent --retry 12 --retry-delay 5 --retry-all-errors https://black-carp.art/health
+          curl --fail --show-error --silent --retry 12 --retry-delay 5 --retry-all-errors https://black-carp.art/health > "$RUNNER_TEMP/black-carp-health.json"
+          HEALTH_FILE="$RUNNER_TEMP/black-carp-health.json" node -e 'const fs=require("fs"); const body=JSON.parse(fs.readFileSync(process.env.HEALTH_FILE,"utf8")); if (!body.ok || body.release !== process.env.RELEASE_SHA) process.exit(1)'
+          curl --fail --show-error --silent --request POST --header "X-Black-Carp-Probe-Token: $DEPLOY_PROBE_TOKEN" https://black-carp.art/api/ops/readiness > "$RUNNER_TEMP/black-carp-readiness.json"
+          HEALTH_FILE="$RUNNER_TEMP/black-carp-readiness.json" node -e 'const fs=require("fs"); const body=JSON.parse(fs.readFileSync(process.env.HEALTH_FILE,"utf8")); if (!body.ok || body.release !== process.env.RELEASE_SHA || body.telegram !== "ready" || body.webhook !== "ready") process.exit(1)'
           curl --fail --show-error --silent --retry 5 --retry-delay 2 https://black-carp.art/crm/ > /dev/null
+
+      - name: Roll back failed release
+        if: failure() && steps.ssh.outcome == 'success' && steps.deploy.outcome != 'skipped'
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: >-
+          ssh -i "$HOME/.ssh/black-carp-deploy"
+          -o BatchMode=yes
+          -o StrictHostKeyChecking=yes
+          -o UserKnownHostsFile="$HOME/.ssh/black-carp-known-hosts"
+          "$SERVER_USER@$SERVER_HOST"
+          "/usr/local/bin/black-carp-rollback '$RELEASE_SHA'"

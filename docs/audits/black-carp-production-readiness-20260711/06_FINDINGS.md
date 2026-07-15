@@ -33,3 +33,20 @@ No P0 was proven. All listed P1 items block production acceptance until fixed.
 - `P2-A03-03` Node runtime compatibility is unspecified.
 
 Detailed proof and status live in each area's `02_PROBLEMS.md`.
+
+## Re-audit 2026-07-12 — final fix pass
+
+The implementation re-audit found no P0 and the following confirmed P1 items. They are the acceptance scope of the final fix pass:
+
+- `P1-R01` body side is not selectable; `bodyView` is always `front`. **Fixed locally.**
+- `P1-R02` reference images are silently lost after draft reload. **Fixed locally.**
+- `P1-R03` delayed wizard navigation is vulnerable to duplicate taps and stale timers. **Fixed locally.**
+- `P1-R04` the booking fallback claims clipboard success even when copying failed and omits contact data. **Fixed locally.**
+- `P1-R05` CRM selection/save requests can render stale data and discard note/schedule drafts after failure. **Fixed locally.**
+- `P1-R06` failed client-comment delivery is not persisted to a durable retry queue despite the bot promise. **Fixed and regression-tested.**
+- `P1-R07` `/start <code>` can rebind an existing request to another Telegram user. **Fixed and regression-tested.**
+- `P1-R08` JSON parsing happens before booking rate limiting and webhook authentication. **Fixed and regression-tested.**
+- `P1-R09` master identity falls back to notification chat ids and proxy trust does not match containerized Caddy. **Fixed and regression-tested.**
+- `P1-R10` Ubuntu test portability, non-root volume ownership, container smoke, legacy migration/restore and atomic deploy provenance are not proven. **Implemented locally; GitHub/host proof remains a release gate.**
+
+Status: all re-audit P1 code fixes are implemented on `codex/crm-production-readiness`; local Browser evidence is complete, while Docker CI and host rollout evidence remain pending.

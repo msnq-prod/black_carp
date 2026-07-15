@@ -17,6 +17,7 @@ const bookingBotUsername = (
   document.querySelector('meta[name="black-carp-bot-username"]')?.content ||
   "blackcarp_bot"
 ).replace(/^@/, "");
+const bookingRequestTimeoutMs = 15_000;
 const viewTitles = {
   home: "Black Carp — авторская графика",
   works: "Работы — Black Carp",
@@ -165,11 +166,15 @@ if (worksTopButton && worksFeed) {
   });
 }
 
-function openRouteModal() {
+let routeModalReturnFocus = null;
+
+function openRouteModal(trigger) {
   if (!routeModal) return;
+  routeModalReturnFocus = trigger instanceof HTMLElement ? trigger : document.activeElement;
   routeModal.hidden = false;
   routeModal.setAttribute("aria-hidden", "false");
   document.body.style.overflow = "hidden";
+  requestAnimationFrame(() => routeModal.querySelector("[data-route-close]")?.focus());
 }
 
 function closeRouteModal() {
@@ -177,10 +182,12 @@ function closeRouteModal() {
   routeModal.hidden = true;
   routeModal.setAttribute("aria-hidden", "true");
   document.body.style.overflow = "";
+  routeModalReturnFocus?.focus?.({ preventScroll: true });
+  routeModalReturnFocus = null;
 }
 
 routeOpenButtons.forEach((button) => {
-  button.addEventListener("click", openRouteModal);
+  button.addEventListener("click", () => openRouteModal(button));
 });
 
 routeCloseButtons.forEach((button) => {
@@ -190,6 +197,21 @@ routeCloseButtons.forEach((button) => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && routeModal && !routeModal.hidden) {
     closeRouteModal();
+    return;
+  }
+  if (event.key === "Tab" && routeModal && !routeModal.hidden) {
+    const focusable = [...routeModal.querySelectorAll('button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter((node) => !node.disabled && node.getClientRects().length);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 });
 
@@ -215,10 +237,17 @@ const wizardState = {
   clientName: "",
   contactType: "telegram",
   contactValue: "",
-  contactComment: ""
+  contactComment: "",
+  pendingReferenceReattachCount: 0
 };
 
 let wizardHistory = [2];
+let wizardTransitionTimer = null;
+let wizardTransitionLocked = false;
+let renderLuxuryMenuControl = null;
+let uploadGeneration = 0;
+let sketchCompressionPromise = null;
+const referenceCompressionPromises = new Set();
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
@@ -358,6 +387,8 @@ const sketchNextBtn = document.getElementById("sketchNextBtn");
 const refInput = document.getElementById("refInput");
 const refUploader = document.getElementById("refUploader");
 const refPreviewsContainer = document.getElementById("refPreviewsContainer");
+const refRestoreNotice = document.getElementById("refRestoreNotice");
+const bodyViewButtons = [...document.querySelectorAll("[data-body-view]")];
 const tattooIdeaText = document.getElementById("tattooIdeaText");
 const ideaNextBtn = document.getElementById("ideaNextBtn");
 const wizardSummaryCard = document.getElementById("wizardSummaryCard");
@@ -374,40 +405,77 @@ const bookingConfirmationForm = document.getElementById("bookingConfirmationForm
 const bookingSuccess = document.getElementById("bookingSuccess");
 const bookingSuccessCode = document.getElementById("bookingSuccessCode");
 const wizardSuccessRestartBtn = document.getElementById("wizardSuccessRestartBtn");
+let wizardToastTimer = null;
+
+function showToast(msg) {
+  if (!wizardToast) return;
+  const message = wizardToast.querySelector(".toast-message");
+  if (message) message.textContent = msg;
+  wizardToast.style.display = "flex";
+  wizardToast.style.animation = "";
+  if (wizardToastTimer) window.clearTimeout(wizardToastTimer);
+  wizardToastTimer = window.setTimeout(() => {
+    wizardToast.style.display = "none";
+    wizardToastTimer = null;
+  }, 3300);
+}
 
 // Compression utility
-function compressImage(file, callback) {
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      let width = img.width;
-      let height = img.height;
-      const MAX_WIDTH = 600;
-      const MAX_HEIGHT = 600;
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("image_read_failed"));
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("image_decode_failed"));
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width;
+        let height = img.height;
+        const MAX_WIDTH = 600;
+        const MAX_HEIGHT = 600;
 
-      if (width > height) {
-        if (width > MAX_WIDTH) {
-          height *= MAX_WIDTH / width;
-          width = MAX_WIDTH;
-        }
-      } else {
-        if (height > MAX_HEIGHT) {
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else if (height > MAX_HEIGHT) {
           width *= MAX_HEIGHT / height;
           height = MAX_HEIGHT;
         }
-      }
 
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, width, height);
-      callback(canvas.toDataURL("image/jpeg", 0.7));
+        canvas.width = Math.max(1, Math.round(width));
+        canvas.height = Math.max(1, Math.round(height));
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("image_canvas_failed"));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.7));
+      };
+      img.src = e.target.result;
     };
-    img.src = e.target.result;
-  };
-  reader.readAsDataURL(file);
+    reader.readAsDataURL(file);
+  });
+}
+
+function setImageProcessingState(button, uploader, busy) {
+  if (button) {
+    button.disabled = busy;
+    button.setAttribute("aria-busy", String(busy));
+    const label = button.querySelector("span");
+    if (label) label.textContent = busy ? "Обрабатываем изображение…" : "Продолжить";
+  }
+  if (uploader) {
+    if (busy) uploader.setAttribute("aria-busy", "true");
+    else uploader.removeAttribute("aria-busy");
+  }
+}
+
+function hasPendingImageProcessing() {
+  return Boolean(sketchCompressionPromise || referenceCompressionPromises.size);
 }
 
 function getWizardTotalSteps() {
@@ -470,6 +538,11 @@ function goToSlide(step) {
   });
 
   updateProgress(step);
+  if (String(step) === "7" && wizardState.pendingReferenceReattachCount > 0 && refRestoreNotice) {
+    const count = wizardState.pendingReferenceReattachCount;
+    refRestoreNotice.hidden = false;
+    refRestoreNotice.textContent = `После обновления прикрепите ${count} ${count === 1 ? "референс" : "референса"} заново или продолжите без них.`;
+  }
   saveStateToStorage();
   const activeHeading = document.querySelector(`.wizard-slide[data-step="${step}"] .wizard-question-title`);
   if (activeHeading) {
@@ -478,12 +551,62 @@ function goToSlide(step) {
   }
 }
 
+function setWizardTransitionState(locked) {
+  wizardTransitionLocked = locked;
+  wizardSlides?.classList.toggle("is-transitioning", locked);
+  if (locked) wizardSlides?.setAttribute("aria-busy", "true");
+  else wizardSlides?.removeAttribute("aria-busy");
+}
+
+function cancelScheduledTransition() {
+  if (wizardTransitionTimer) window.clearTimeout(wizardTransitionTimer);
+  wizardTransitionTimer = null;
+  setWizardTransitionState(false);
+}
+
+function scheduleNextStep(target, delay = 250) {
+  if (wizardTransitionLocked) return false;
+  setWizardTransitionState(true);
+  wizardTransitionTimer = window.setTimeout(() => {
+    wizardTransitionTimer = null;
+    setWizardTransitionState(false);
+    nextStep(target);
+  }, delay);
+  return true;
+}
+
+function syncBodyViewControls() {
+  bodyViewButtons.forEach((button) => {
+    const isActive = button.dataset.bodyView === wizardState.bodyView;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+}
+
+function setBodyView(view, { save = true } = {}) {
+  if (!['front', 'back'].includes(view)) return;
+  wizardState.bodyView = view;
+  const incompatibleZone = (view === "front" && wizardState.bodyZone === "back")
+    || (view === "back" && wizardState.bodyZone === "torso");
+  if (incompatibleZone) {
+    wizardState.bodyZone = null;
+    wizardState.bodySubzone = null;
+    wizardState.bodySubzoneCustom = "";
+    renderLuxuryMenuControl?.();
+    if (save) showToast("Выберите зону для этой стороны тела заново.");
+  }
+  syncBodyViewControls();
+  if (save) saveStateToStorage();
+}
+
 function nextStep(target) {
+  if (String(wizardHistory.at(-1)) === String(target)) return;
   wizardHistory.push(target);
   goToSlide(target);
 }
 
 function prevStep() {
+  cancelScheduledTransition();
   if (wizardHistory.length > 1) {
     wizardHistory.pop();
     const target = wizardHistory[wizardHistory.length - 1];
@@ -493,6 +616,15 @@ function prevStep() {
 
 // Reset Wizard
 function resetWizard() {
+  cancelScheduledTransition();
+  if (wizardToastTimer) window.clearTimeout(wizardToastTimer);
+  wizardToastTimer = null;
+  if (wizardToast) wizardToast.style.display = "none";
+  uploadGeneration += 1;
+  sketchCompressionPromise = null;
+  referenceCompressionPromises.clear();
+  setImageProcessingState(sketchNextBtn, sketchUploader, false);
+  setImageProcessingState(ideaNextBtn, refUploader, false);
   wizardState.firstTattoo = null;
   wizardState.beenToMaster = null;
   wizardState.hasSketch = null;
@@ -510,14 +642,16 @@ function resetWizard() {
   wizardState.contactType = "telegram";
   wizardState.contactValue = "";
   wizardState.contactComment = "";
+  wizardState.pendingReferenceReattachCount = 0;
 
   wizardHistory = [2];
 
   // UI Resets
-  document.querySelectorAll(".option-card").forEach(c => c.classList.remove("selected"));
-  document.querySelectorAll(".size-preset-card").forEach(c => c.classList.remove("selected"));
+  document.querySelectorAll(".option-card").forEach(c => { c.classList.remove("selected"); c.setAttribute("aria-pressed", "false"); });
+  document.querySelectorAll(".size-preset-card").forEach(c => { c.classList.remove("selected"); c.setAttribute("aria-pressed", "false"); });
 
   if (sketchPreviewImg) sketchPreviewImg.src = "";
+  if (sketchInput) sketchInput.value = "";
   if (sketchUploader) {
     sketchUploader.querySelector(".uploader-zone").style.display = "flex";
     sketchUploader.querySelector(".uploader-preview").style.display = "none";
@@ -527,6 +661,11 @@ function resetWizard() {
     refPreviewsContainer.innerHTML = "";
     refPreviewsContainer.style.display = "none";
   }
+  if (refInput) refInput.value = "";
+  if (refRestoreNotice) {
+    refRestoreNotice.hidden = true;
+    refRestoreNotice.textContent = "";
+  }
   if (tattooIdeaText) tattooIdeaText.value = "";
   if (sizeSliderVal) sizeSliderVal.textContent = "";
   updateSizeVisualizer(null);
@@ -534,11 +673,12 @@ function resetWizard() {
     const label = sizeNextBtn.querySelector("span");
     if (label) label.textContent = "Продолжить без размера";
   }
-  if (bookingConsent) bookingConsent.checked = false;
+  if (bookingConsent) { bookingConsent.checked = false; bookingConsent.removeAttribute("aria-invalid"); }
   if (bookingClientName) bookingClientName.value = "";
   if (bookingContactType) bookingContactType.value = "telegram";
   if (bookingContactValue) bookingContactValue.value = "";
   if (bookingContactComment) bookingContactComment.value = "";
+  for (const field of [bookingClientName, bookingContactValue]) field?.removeAttribute("aria-invalid");
   if (bookingConfirmationForm) bookingConfirmationForm.hidden = false;
   if (bookingSuccess) bookingSuccess.hidden = true;
   if (wizardSubmitBtn) {
@@ -548,6 +688,8 @@ function resetWizard() {
   }
 
   resetBodySilhouette();
+  syncBodyViewControls();
+  renderLuxuryMenuControl?.();
   localStorage.removeItem("black_carp_booking_idempotency_key");
   localStorage.removeItem("black_carp_booking_state");
   localStorage.removeItem("black_carp_booking_history");
@@ -569,50 +711,61 @@ function resetBodySilhouette() {
 // Setup Event Listeners
 function initWizard() {
   if (!document.getElementById("bookingWizard")) return;
+  document.querySelectorAll(".option-card, .size-preset-card").forEach((button) => button.setAttribute("aria-pressed", String(button.classList.contains("selected"))));
 
   // Option Cards
   document.querySelectorAll(".wizard-slide[data-step='2'] .option-card").forEach(card => {
     card.addEventListener("click", () => {
+      if (wizardTransitionLocked) return;
       const val = card.dataset.value;
       wizardState.firstTattoo = val;
 
-      document.querySelectorAll(".wizard-slide[data-step='2'] .option-card").forEach(c => c.classList.remove("selected"));
+      document.querySelectorAll(".wizard-slide[data-step='2'] .option-card").forEach(c => { c.classList.remove("selected"); c.setAttribute("aria-pressed", "false"); });
       card.classList.add("selected");
+      card.setAttribute("aria-pressed", "true");
 
-      setTimeout(() => {
-        const next = card.dataset.next;
-        nextStep(next);
-      }, 250);
+      scheduleNextStep(card.dataset.next);
     });
   });
 
   document.querySelectorAll(".wizard-slide[data-step='3'] .option-card").forEach(card => {
     card.addEventListener("click", () => {
+      if (wizardTransitionLocked) return;
       const val = card.dataset.value;
       wizardState.beenToMaster = val;
 
-      document.querySelectorAll(".wizard-slide[data-step='3'] .option-card").forEach(c => c.classList.remove("selected"));
+      document.querySelectorAll(".wizard-slide[data-step='3'] .option-card").forEach(c => { c.classList.remove("selected"); c.setAttribute("aria-pressed", "false"); });
       card.classList.add("selected");
+      card.setAttribute("aria-pressed", "true");
 
-      setTimeout(() => {
-        const next = card.dataset.next;
-        nextStep(next);
-      }, 250);
+      scheduleNextStep(card.dataset.next);
     });
   });
 
   document.querySelectorAll(".wizard-slide[data-step='4'] .option-card").forEach(card => {
     card.addEventListener("click", () => {
+      if (wizardTransitionLocked) return;
       const val = card.dataset.value;
       wizardState.hasSketch = (val === "yes");
+      if (!wizardState.hasSketch) {
+        sketchCompressionPromise = null;
+        wizardState.sketchData = null;
+        wizardState.sketchComment = "";
+        setImageProcessingState(sketchNextBtn, sketchUploader, false);
+        if (sketchInput) sketchInput.value = "";
+        if (sketchPreviewImg) sketchPreviewImg.src = "";
+        if (sketchComment) sketchComment.value = "";
+        if (sketchUploader) {
+          sketchUploader.querySelector(".uploader-zone").style.display = "flex";
+          sketchUploader.querySelector(".uploader-preview").style.display = "none";
+        }
+      }
 
-      document.querySelectorAll(".wizard-slide[data-step='4'] .option-card").forEach(c => c.classList.remove("selected"));
+      document.querySelectorAll(".wizard-slide[data-step='4'] .option-card").forEach(c => { c.classList.remove("selected"); c.setAttribute("aria-pressed", "false"); });
       card.classList.add("selected");
+      card.setAttribute("aria-pressed", "true");
 
-      setTimeout(() => {
-        const next = card.dataset.next;
-        nextStep(next);
-      }, 250);
+      scheduleNextStep(card.dataset.next);
     });
   });
 
@@ -641,6 +794,8 @@ function initWizard() {
     saveStateToStorage();
   }));
   bookingContactType?.addEventListener("change", () => { wizardState.contactType = bookingContactType.value; saveStateToStorage(); });
+  bookingConsent?.addEventListener("change", () => bookingConsent.removeAttribute("aria-invalid"));
+  bodyViewButtons.forEach((button) => button.addEventListener("click", () => setBodyView(button.dataset.bodyView)));
 
   // File Upload 1 (Sketch)
   if (sketchUploader && sketchInput) {
@@ -650,15 +805,32 @@ function initWizard() {
       }
     });
 
-    sketchInput.addEventListener("change", (e) => {
+    sketchInput.addEventListener("change", async (e) => {
       const file = e.target.files[0];
       if (file) {
-        compressImage(file, (base64) => {
+        const generation = uploadGeneration;
+        const compression = compressImage(file);
+        sketchCompressionPromise = compression;
+        setImageProcessingState(sketchNextBtn, sketchUploader, true);
+        try {
+          const base64 = await compression;
+          if (generation !== uploadGeneration || sketchCompressionPromise !== compression) return;
           wizardState.sketchData = base64;
           if (sketchPreviewImg) sketchPreviewImg.src = base64;
           sketchUploader.querySelector(".uploader-zone").style.display = "none";
           sketchUploader.querySelector(".uploader-preview").style.display = "flex";
-        });
+          saveStateToStorage();
+        } catch {
+          if (generation === uploadGeneration && sketchCompressionPromise === compression) {
+            showToast("Не удалось обработать изображение. Выберите другой файл.");
+          }
+        } finally {
+          if (sketchCompressionPromise === compression) {
+            sketchCompressionPromise = null;
+            setImageProcessingState(sketchNextBtn, sketchUploader, false);
+          }
+        }
+        sketchInput.value = "";
       }
     });
   }
@@ -666,6 +838,8 @@ function initWizard() {
   if (btnRemoveSketch) {
     btnRemoveSketch.addEventListener("click", (e) => {
       e.stopPropagation();
+      sketchCompressionPromise = null;
+      setImageProcessingState(sketchNextBtn, sketchUploader, false);
       wizardState.sketchData = null;
       if (sketchInput) sketchInput.value = "";
       if (sketchPreviewImg) sketchPreviewImg.src = "";
@@ -678,9 +852,13 @@ function initWizard() {
 
   if (sketchNextBtn) {
     sketchNextBtn.addEventListener("click", () => {
+      if (sketchCompressionPromise) {
+        showToast("Дождитесь обработки эскиза.");
+        return;
+      }
       if (wizardState.hasSketch && !wizardState.sketchData) {
         showToast("Добавьте файл эскиза, чтобы продолжить.");
-        sketchInput?.focus();
+        sketchUploader?.querySelector(".uploader-zone")?.focus();
         return;
       }
       if (sketchComment) wizardState.sketchComment = sketchComment.value;
@@ -699,15 +877,34 @@ function initWizard() {
     refInput.addEventListener("change", (e) => {
       const files = [...e.target.files];
       const maxRefs = 3;
-      const currentCount = wizardState.referenceImages.length;
+      const currentCount = wizardState.referenceImages.length + referenceCompressionPromises.size;
       const allowed = maxRefs - currentCount;
+      const generation = uploadGeneration;
 
       files.slice(0, allowed).forEach(file => {
-        compressImage(file, (base64) => {
+        const compression = compressImage(file);
+        referenceCompressionPromises.add(compression);
+        setImageProcessingState(ideaNextBtn, refUploader, true);
+        compression.then((base64) => {
+          if (generation !== uploadGeneration || !referenceCompressionPromises.has(compression)) return;
           wizardState.referenceImages.push(base64);
+          wizardState.pendingReferenceReattachCount = 0;
+          if (refRestoreNotice) {
+            refRestoreNotice.hidden = true;
+            refRestoreNotice.textContent = "";
+          }
           renderRefPreviews();
+          saveStateToStorage();
+        }).catch(() => {
+          if (generation === uploadGeneration && referenceCompressionPromises.has(compression)) {
+            showToast("Один из референсов не удалось обработать.");
+          }
+        }).finally(() => {
+          referenceCompressionPromises.delete(compression);
+          if (!referenceCompressionPromises.size) setImageProcessingState(ideaNextBtn, refUploader, false);
         });
       });
+      refInput.value = "";
     });
   }
 
@@ -732,6 +929,8 @@ function initWizard() {
           const idx = parseInt(btn.dataset.index);
           wizardState.referenceImages.splice(idx, 1);
           renderRefPreviews();
+          if (refInput) refInput.value = "";
+          saveStateToStorage();
         });
       });
     } else {
@@ -742,7 +941,16 @@ function initWizard() {
 
   if (ideaNextBtn) {
     ideaNextBtn.addEventListener("click", () => {
+      if (referenceCompressionPromises.size) {
+        showToast("Дождитесь обработки референсов.");
+        return;
+      }
       if (tattooIdeaText) wizardState.ideaText = tattooIdeaText.value;
+      wizardState.pendingReferenceReattachCount = 0;
+      if (refRestoreNotice) {
+        refRestoreNotice.hidden = true;
+        refRestoreNotice.textContent = "";
+      }
       renderSummary();
       nextStep(8);
     });
@@ -767,10 +975,13 @@ function initWizard() {
       const zoneBtn = document.createElement("button");
       zoneBtn.type = "button";
       zoneBtn.className = `luxury-zone-btn ${wizardState.bodyZone === zone ? "active" : ""}`;
+      zoneBtn.setAttribute("aria-expanded", String(wizardState.bodyZone === zone));
+      zoneBtn.setAttribute("aria-controls", `body-zone-${zone}`);
       zoneBtn.innerHTML = `<span>${zoneName}</span><svg class="chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>`;
 
       const subzoneContainer = document.createElement("div");
       subzoneContainer.className = "luxury-subzones-container";
+      subzoneContainer.id = `body-zone-${zone}`;
       if (wizardState.bodyZone === zone) {
         subzoneContainer.style.display = "grid";
       } else {
@@ -781,17 +992,23 @@ function initWizard() {
         const szBtn = document.createElement("button");
         szBtn.type = "button";
         szBtn.className = `luxury-subzone-btn ${wizardState.bodySubzone === sz ? "selected" : ""}`;
+        szBtn.setAttribute("aria-pressed", String(wizardState.bodySubzone === sz));
         szBtn.textContent = sz;
         szBtn.addEventListener("click", (e) => {
           e.stopPropagation();
+          if (wizardTransitionLocked) return;
           wizardState.bodyZone = zone;
           wizardState.bodySubzone = sz;
           wizardState.bodySubzoneCustom = "";
+          if (zone === "back") setBodyView("back", { save:false });
+          if (zone === "torso") setBodyView("front", { save:false });
 
-          document.querySelectorAll(".luxury-subzone-btn").forEach(b => b.classList.remove("selected"));
+          document.querySelectorAll(".luxury-subzone-btn").forEach(b => { b.classList.remove("selected"); b.setAttribute("aria-pressed", "false"); });
           szBtn.classList.add("selected");
+          szBtn.setAttribute("aria-pressed", "true");
 
-          setTimeout(() => nextStep(6), 300);
+          saveStateToStorage();
+          scheduleNextStep(6, 300);
         });
         subzoneContainer.appendChild(szBtn);
       });
@@ -806,6 +1023,7 @@ function initWizard() {
           wizardState.bodyZone = "other";
           wizardState.bodySubzone = "Другое";
           wizardState.bodySubzoneCustom = value;
+          saveStateToStorage();
           nextStep(6);
         };
 
@@ -814,6 +1032,7 @@ function initWizard() {
         customInput.id = "luxurySubzoneCustomInput";
         customInput.className = "luxury-subzone-custom-input";
         customInput.placeholder = "свой вариант";
+        customInput.setAttribute("aria-label", "Своя зона тела");
         customInput.value = wizardState.bodySubzoneCustom || "";
         customInput.maxLength = 80;
 
@@ -822,6 +1041,7 @@ function initWizard() {
           wizardState.bodyZone = "other";
           wizardState.bodySubzone = "Другое";
           zoneBtn.classList.add("active");
+          zoneBtn.setAttribute("aria-expanded", "true");
           subzoneContainer.style.display = "grid";
         });
         customInput.addEventListener("input", () => {
@@ -863,7 +1083,7 @@ function initWizard() {
         const isActive = wizardState.bodyZone === zone;
 
         // Close all others
-        document.querySelectorAll(".luxury-zone-btn").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".luxury-zone-btn").forEach(b => { b.classList.remove("active"); b.setAttribute("aria-expanded", "false"); });
         document.querySelectorAll(".luxury-subzones-container").forEach(c => c.style.display = "none");
 
         if (!isActive) {
@@ -871,11 +1091,15 @@ function initWizard() {
           wizardState.bodySubzone = null;
           wizardState.bodySubzoneCustom = "";
           zoneBtn.classList.add("active");
+          zoneBtn.setAttribute("aria-expanded", "true");
           subzoneContainer.style.display = "grid";
+          if (zone === "back") setBodyView("back", { save:false });
+          if (zone === "torso") setBodyView("front", { save:false });
         } else {
           wizardState.bodyZone = null;
           wizardState.bodySubzone = null;
         }
+        saveStateToStorage();
       });
 
       zoneGroup.appendChild(zoneBtn);
@@ -883,6 +1107,7 @@ function initWizard() {
       luxuryBodyMenu.appendChild(zoneGroup);
     });
   }
+  renderLuxuryMenuControl = renderLuxuryMenu;
 
   function getBodySubzoneLabel() {
     if (wizardState.bodySubzone === "Другое" && wizardState.bodySubzoneCustom) {
@@ -900,8 +1125,9 @@ function initWizard() {
       const preset = card.dataset.sizePreset;
       wizardState.sizePreset = preset;
 
-      document.querySelectorAll(".size-preset-card").forEach(c => c.classList.remove("selected"));
+      document.querySelectorAll(".size-preset-card").forEach(c => { c.classList.remove("selected"); c.setAttribute("aria-pressed", "false"); });
       card.classList.add("selected");
+      card.setAttribute("aria-pressed", "true");
 
       const sizeCm = getPresetSizeCm(preset);
       wizardState.sizeCm = sizeCm;
@@ -999,8 +1225,14 @@ function initWizard() {
   // Submit action
   if (wizardSubmitBtn) {
     wizardSubmitBtn.addEventListener("click", async () => {
+      if (hasPendingImageProcessing()) {
+        showToast("Дождитесь обработки изображений.");
+        return;
+      }
       if (!validateContactFields()) return;
       if (!bookingConsent?.checked) {
+        bookingConsent?.setAttribute("aria-invalid", "true");
+        bookingConsent?.focus();
         showToast("Подтвердите согласие на отправку анкеты.");
         return;
       }
@@ -1014,8 +1246,10 @@ function initWizard() {
         showBookingSuccess(result);
       } catch (err) {
         console.error("Booking submit failed: ", err);
-        await copyToClipboard(textReport);
-        showToast("Не удалось отправить заявку. Данные скопированы — попробуйте ещё раз.");
+        const copied = await copyToClipboard(textReport);
+        showToast(copied
+          ? "Нет связи с сервером. Резюме с контактом скопировано — анкета сохранена, попробуйте ещё раз."
+          : "Нет связи с сервером. Анкета сохранена на устройстве — проверьте интернет и повторите отправку.");
         setSubmitState(false, originalLabel);
       }
     });
@@ -1090,11 +1324,22 @@ function initWizard() {
   }
 
   async function submitBookingToApi() {
-    const response = await fetch(`${bookingApiBase}/api/booking/submit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildBookingPayload())
-    });
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), bookingRequestTimeoutMs);
+    let response;
+    try {
+      response = await fetch(`${bookingApiBase}/api/booking/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildBookingPayload()),
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") throw new Error("booking_timeout");
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
     const data = await response.json().catch(() => null);
 
     if (!response.ok || !data?.ok) {
@@ -1143,7 +1388,7 @@ function initWizard() {
 
   function buildBookingAttachments() {
     const attachments = [];
-    if (wizardState.sketchData) {
+    if (wizardState.hasSketch && wizardState.sketchData) {
       attachments.push({
         kind: "sketch",
         dataUrl: wizardState.sketchData
@@ -1169,11 +1414,27 @@ function initWizard() {
   }
 
   async function copyToClipboard(text) {
-    if (!navigator.clipboard?.writeText) return;
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // Continue to the synchronous fallback used by older WebViews.
+      }
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
     try {
-      await navigator.clipboard.writeText(text);
-    } catch (err) {
-      console.error("Clipboard copy failed: ", err);
+      return Boolean(document.execCommand?.("copy"));
+    } catch {
+      return false;
+    } finally {
+      textarea.remove();
     }
   }
 
@@ -1190,15 +1451,22 @@ function initWizard() {
     const sketchText = wizardState.hasSketch ? "Да" : "Нужна разработка";
     const sideText = wizardState.bodyView === "front" ? "Спереди" : "Сзади";
     const locationText = `${zoneNamesRu[wizardState.bodyZone] || "Не указана"} — ${getBodySubzoneLabel() || "Не указана"} (${sideText})`;
+    const contactTypeText = { telegram:"Telegram", phone:"Телефон", other:"Другой" }[wizardState.contactType] || wizardState.contactType;
 
     return `BLACK CARP — АНКЕТА ЗАПИСИ
 ------------------------------
+• Имя: ${wizardState.clientName || "Не указано"}
+• Канал связи: ${contactTypeText || "Не указан"}
+• Контакт: ${wizardState.contactValue || "Не указан"}
+• Комментарий к контакту: ${wizardState.contactComment || "Нет"}
 • Первая татуировка: ${firstTattooText}
 • Был(а) у этого мастера: ${beenToMasterText}
 • Готовый эскиз: ${sketchText}
+• Комментарий к эскизу: ${wizardState.sketchComment || "Нет"}
 • Зона нанесения: ${locationText}
 • Размер: ${wizardState.sizeCm ? `~${wizardState.sizeCm} см (Пресет ${wizardState.sizePreset})` : "Не выбран"}
-• Описание идеи: ${wizardState.ideaText || "Опишет в переписке"}`;
+• Описание идеи: ${wizardState.ideaText || "Опишет в переписке"}
+• Референсов прикреплено: ${wizardState.referenceImages.length}`;
   }
 
   function getTelegramCode() {
@@ -1214,18 +1482,6 @@ function initWizard() {
     ].join("_");
   }
 
-  function showToast(msg) {
-    if (!wizardToast) return;
-    wizardToast.querySelector(".toast-message").textContent = msg;
-    wizardToast.style.display = "flex";
-    setTimeout(() => {
-      wizardToast.style.animation = "none";
-      setTimeout(() => {
-        wizardToast.style.display = "none";
-      }, 500);
-    }, 2800);
-  }
-
   renderLuxuryMenu();
   loadStateFromStorage();
 }
@@ -1235,7 +1491,7 @@ function saveStateToStorage() {
     const stateCopy = { ...wizardState };
     // Don't store large image files in local storage to prevent quota errors
     stateCopy.hadSketchFile = Boolean(stateCopy.sketchData);
-    stateCopy.referenceImageCount = stateCopy.referenceImages.length;
+    stateCopy.referenceImageCount = stateCopy.referenceImages.length || Number(stateCopy.pendingReferenceReattachCount) || 0;
     stateCopy.sketchData = null;
     stateCopy.referenceImages = [];
 
@@ -1253,21 +1509,38 @@ function loadStateFromStorage() {
 
     if (savedState && savedHistory) {
       const parsedState = JSON.parse(savedState);
+      const missingReferenceCount = Math.max(0, Number(parsedState.referenceImageCount) || 0);
 
       // Restore values
       Object.assign(wizardState, parsedState);
       wizardState.sizeCm = Number(wizardState.sizeCm) || null;
+      wizardState.bodyView = ["front", "back"].includes(wizardState.bodyView) ? wizardState.bodyView : "front";
+      if (wizardState.bodyZone === "back") wizardState.bodyView = "back";
+      if (wizardState.bodyZone === "torso") wizardState.bodyView = "front";
+      wizardState.referenceImages = [];
       const parsedHistory = JSON.parse(savedHistory);
       const allowedSteps = new Set(["2", "3", "4", "4a", "5", "6", "7", "8"]);
       wizardHistory = Array.isArray(parsedHistory)
         ? parsedHistory.filter((step) => allowedSteps.has(String(step)))
         : [2];
       if (!wizardHistory.length) wizardHistory = [2];
+      const hadReferenceStep = wizardHistory.some((step) => String(step) === "7");
+      wizardState.pendingReferenceReattachCount = missingReferenceCount;
 
       if (wizardState.hasSketch && !wizardState.sketchData && wizardHistory.some((step) => String(step) === "4a")) {
         const uploadIndex = wizardHistory.findIndex((step) => String(step) === "4a");
         wizardHistory = wizardHistory.slice(0, uploadIndex + 1);
         setTimeout(() => showToast("После обновления добавьте файл эскиза заново."), 0);
+      }
+
+      if (missingReferenceCount > 0 && hadReferenceStep) {
+        const ideaIndex = wizardHistory.findIndex((step) => String(step) === "7");
+        if (ideaIndex >= 0) wizardHistory = wizardHistory.slice(0, ideaIndex + 1);
+        if (refRestoreNotice) {
+          refRestoreNotice.hidden = false;
+          refRestoreNotice.textContent = `После обновления прикрепите ${missingReferenceCount} ${missingReferenceCount === 1 ? "референс" : "референса"} заново или продолжите без них.`;
+        }
+        setTimeout(() => showToast("Референсы не хранятся в браузере — прикрепите их заново."), 0);
       }
 
       // Restore UI indicators
@@ -1290,9 +1563,7 @@ function loadStateFromStorage() {
       }
 
       // Sync Front/Back buttons
-      document.querySelectorAll(".map-view-toggle").forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.view === wizardState.bodyView);
-      });
+      syncBodyViewControls();
       if (wizardState.bodyView === "front") {
         if (svgGroupFront) svgGroupFront.style.display = "block";
         if (svgGroupBack) svgGroupBack.style.display = "none";
@@ -1303,6 +1574,7 @@ function loadStateFromStorage() {
 
       // Restore option selections in HTML
       restoreSelectionClasses();
+      renderLuxuryMenuControl?.();
       if (String(lastStep) === "8") window.renderBlackCarpBookingSummary?.();
       goToSlide(lastStep);
     } else {
@@ -1318,26 +1590,34 @@ function restoreSelectionClasses() {
   // Step 2
   if (wizardState.firstTattoo) {
     document.querySelectorAll(".wizard-slide[data-step='2'] .option-card").forEach(c => {
-      c.classList.toggle("selected", c.dataset.value === wizardState.firstTattoo);
+      const selected = c.dataset.value === wizardState.firstTattoo;
+      c.classList.toggle("selected", selected);
+      c.setAttribute("aria-pressed", String(selected));
     });
   }
   // Step 3
   if (wizardState.beenToMaster) {
     document.querySelectorAll(".wizard-slide[data-step='3'] .option-card").forEach(c => {
-      c.classList.toggle("selected", c.dataset.value === wizardState.beenToMaster);
+      const selected = c.dataset.value === wizardState.beenToMaster;
+      c.classList.toggle("selected", selected);
+      c.setAttribute("aria-pressed", String(selected));
     });
   }
   // Step 4
   if (wizardState.hasSketch !== null) {
     const val = wizardState.hasSketch ? "yes" : "no";
     document.querySelectorAll(".wizard-slide[data-step='4'] .option-card").forEach(c => {
-      c.classList.toggle("selected", c.dataset.value === val);
+      const selected = c.dataset.value === val;
+      c.classList.toggle("selected", selected);
+      c.setAttribute("aria-pressed", String(selected));
     });
   }
   // Step 6 size
   if (wizardState.sizePreset) {
     document.querySelectorAll(".size-preset-card").forEach(c => {
-      c.classList.toggle("selected", c.dataset.sizePreset === wizardState.sizePreset);
+      const selected = c.dataset.sizePreset === wizardState.sizePreset;
+      c.classList.toggle("selected", selected);
+      c.setAttribute("aria-pressed", String(selected));
     });
     if (sizeNextBtn) {
       const label = sizeNextBtn.querySelector("span");

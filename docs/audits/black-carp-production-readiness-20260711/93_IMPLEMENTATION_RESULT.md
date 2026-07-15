@@ -10,7 +10,7 @@
 - CRM WebApp: initData auth, allowlist, список, поиск, фильтры, карточка, статусы, заметки, планирование, история и приватные вложения;
 - защита webhook, rate limit, security headers и fail-closed readiness;
 - desktop/mobile public UI, рабочий `/#/booking`, восстановление анкеты и честный статус последней заявки;
-- CI gate, Docker runtime и ежедневный backup;
+- CI gate, non-root Docker runtime и проверяемый backup/restore с off-host hook;
 - реальные интеграционные тесты ключевого потока.
 
 ## Критерии ТЗ
@@ -33,10 +33,10 @@
 ## Проверка
 
 - `npm run check` — pass;
-- `npm test` — 7/7 pass;
+- `npm test` — 13/13 pass;
 - `npm audit --omit=dev` — 0 vulnerabilities;
-- `docker compose config` — pass; image build не запускался, локальный Docker daemon выключен;
-- browser QA — public flow, success, CRM deep-link, note save, mobile/desktop geometry, no console errors;
-- backup smoke — SQLite copy readback pass.
+- `docker compose config --quiet` — pass; image build должен подтвердить GitHub CI, локальный Docker daemon выключен;
+- browser QA — fresh local server, public booking flow, body-side invariant, success, CRM refresh/card/note save/focus and mobile geometry;
+- backup smoke — checksum, SQLite integrity, archive extraction and attachment readback pass.
 
-Production deploy не выполнялся: для него нужны актуальные host secrets, подключение cron из `ops/` и запуск штатного deploy script.
+Production deploy не выполнялся. До него обязательны green Docker/backup CI, установка host deploy/rollback scripts под SHA-контракт, external Caddy network, cron от выделенного UID/GID, off-host backup и ротация runtime secrets.

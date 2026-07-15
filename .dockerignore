@@ -1,9 +1,16 @@
 .git
 .github
 .env
+.env.*
+!.env.example
 data
 uploads
 node_modules
 docs
 test
+coverage
+.DS_Store
 *.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

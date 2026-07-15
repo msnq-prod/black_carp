@@ -7,6 +7,7 @@ const { DatabaseSync } = require("node:sqlite");
 
 const rootDir = __dirname;
 loadEnvFile(path.join(rootDir, ".env"));
+const buildRevision = readBuildRevision();
 
 const dataDir = path.join(rootDir, "data");
 const uploadsDir = path.join(rootDir, "uploads", "booking");
@@ -14,6 +15,11 @@ const dbPath = process.env.DB_PATH || path.join(dataDir, "black-carp.sqlite");
 const port = Number(process.env.PORT || 3001);
 const botUsername = (process.env.BOT_USERNAME || "blackcarp_bot").replace(/^@/, "");
 const host = process.env.HOST || (fs.existsSync("/.dockerenv") ? "0.0.0.0" : "127.0.0.1");
+const trustProxy = configuredTrustProxy();
+const LATEST_SCHEMA_VERSION = 2;
+const bookingJson = express.json({ limit: process.env.JSON_LIMIT || "25mb" });
+const crmJson = express.json({ limit: "32kb" });
+const webhookJson = express.json({ limit: "1mb" });
 const CRM_STATUSES = ["new", "in_review", "need_details", "approved", "scheduled", "done", "cancelled"];
 const CRM_TRANSITIONS = {
   new: ["in_review", "need_details", "approved", "scheduled", "cancelled"],
@@ -34,15 +40,16 @@ const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA journal_mode = WAL;");
 db.exec("PRAGMA foreign_keys = ON;");
 hardenRuntimePermissions();
+assertSupportedDatabaseVersion(db);
 backupDatabaseBeforeMigration(db, databaseExisted);
 db.exec(schemaSql());
 runMigrations(db);
+recoverStaleOutboxClaims(db);
 
 const app = express();
-app.set("trust proxy", "loopback");
+app.set("trust proxy", trustProxy);
 
 app.use(securityHeaders);
-app.use(express.json({ limit: process.env.JSON_LIMIT || "25mb" }));
 app.use(cors);
 app.use("/api/crm", (req, res, next) => { res.setHeader("Cache-Control", "private, no-store"); next(); });
 
@@ -51,13 +58,35 @@ app.get("/health", (req, res) => {
     db.prepare("SELECT 1 AS ok").get();
     const missing = requiredConfiguration();
     const ready = missing.length === 0;
-    res.status(ready ? 200 : 503).json({ ok: ready, service: "black-carp", database: "ready", configuration: ready ? "ready" : "incomplete", missing });
+    res.status(ready ? 200 : 503).json({ ok: ready, service: "black-carp", release: releaseSha(), database: "ready", configuration: ready ? "ready" : "incomplete", missing });
   } catch {
     res.status(503).json({ ok: false, database: "unavailable" });
   }
 });
 
-app.post("/api/booking/submit", bookingRateLimit, async (req, res) => {
+app.post("/api/ops/readiness", requireDeployProbeToken, async (req, res) => {
+  let databaseReady = false;
+  try {
+    db.prepare("SELECT 1 AS ok").get();
+    databaseReady = true;
+    await telegramRequest("getMe", {});
+    await telegramRequest("setWebhook", {
+      url:`${siteUrl()}/telegram/webhook`,
+      secret_token:process.env.WEBHOOK_SECRET,
+      allowed_updates:["message", "callback_query"],
+      drop_pending_updates:false
+    });
+    const webhook = await telegramRequest("getWebhookInfo", {});
+    if (String(webhook?.result?.url || "") !== `${siteUrl()}/telegram/webhook`) throw new Error("telegram_webhook_mismatch");
+    await Promise.all(masterIds().map((chatId) => telegramRequest("sendChatAction", { chat_id:chatId, action:"typing" })));
+    res.json({ ok:true, release:releaseSha(), database:"ready", telegram:"ready", webhook:"ready" });
+  } catch (error) {
+    console.error("deploy_readiness_failed", error);
+    res.status(503).json({ ok:false, release:releaseSha(), database:databaseReady ? "ready" : "unavailable", telegram:"unavailable", webhook:"unavailable" });
+  }
+});
+
+app.post("/api/booking/submit", bookingRateLimit, bookingJson, async (req, res) => {
   try {
     const payload = req.body;
     const validationError = validateBookingPayload(payload);
@@ -211,7 +240,7 @@ app.get("/api/crm/requests/:id", requireCrmAuth, (req, res) => {
   res.json({ ok: true, request: crmDetail(request) });
 });
 
-app.patch("/api/crm/requests/:id/status", requireCrmAuth, (req, res) => {
+app.patch("/api/crm/requests/:id/status", requireCrmAuth, crmJson, (req, res) => {
   const nextStatus = String(req.body?.status || "");
   if (!CRM_STATUSES.includes(nextStatus)) return res.status(400).json({ ok: false, error: "invalid_status" });
   const request = crmRequestById(req.params.id);
@@ -227,7 +256,7 @@ app.patch("/api/crm/requests/:id/status", requireCrmAuth, (req, res) => {
   res.json({ ok: true, request: crmDetail(crmRequestById(request.id)) });
 });
 
-app.post("/api/crm/requests/:id/notes", requireCrmAuth, (req, res) => {
+app.post("/api/crm/requests/:id/notes", requireCrmAuth, crmJson, (req, res) => {
   const text = normalizeShortText(req.body?.text, 2000);
   if (!text || text.length < 1) return res.status(400).json({ ok: false, error: "note_required" });
   const request = crmRequestById(req.params.id);
@@ -240,7 +269,7 @@ app.post("/api/crm/requests/:id/notes", requireCrmAuth, (req, res) => {
   res.status(201).json({ ok: true, note });
 });
 
-app.patch("/api/crm/requests/:id/schedule", requireCrmAuth, (req, res) => {
+app.patch("/api/crm/requests/:id/schedule", requireCrmAuth, crmJson, (req, res) => {
   const scheduledAt = String(req.body?.scheduledAt || "");
   const date = new Date(scheduledAt);
   const durationMinutes = Number(req.body?.durationMinutes);
@@ -271,26 +300,29 @@ app.get("/api/crm/requests/:id/attachments/:attachmentId", requireCrmAuth, (req,
 });
 
 app.post("/api/crm/outbox/:id/retry", requireCrmAuth, async (req, res) => {
-  const outbox = db.prepare("SELECT * FROM notification_outbox WHERE id=?").get(req.params.id);
-  if (!outbox) return res.status(404).json({ ok: false, error: "not_found" });
-  if (!["retry_wait", "pending"].includes(outbox.status)) return res.status(409).json({ ok: false, error: "not_retryable" });
-  db.prepare("UPDATE notification_outbox SET status='pending', next_attempt_at=?, updated_at=? WHERE id=?").run(new Date().toISOString(), new Date().toISOString(), outbox.id);
-  const result = await deliverOutbox(outbox.id);
-  res.json({ ok: result.ok, outboxId: outbox.id, error: result.ok ? undefined : "delivery_failed" });
+  try {
+    const outbox = db.prepare("SELECT id FROM notification_outbox WHERE id=?").get(req.params.id);
+    if (!outbox) return res.status(404).json({ ok: false, error: "not_found" });
+    const now = new Date().toISOString();
+    const scheduled = db.prepare("UPDATE notification_outbox SET status='pending', next_attempt_at=?, claim_token=NULL, claimed_at=NULL, updated_at=? WHERE id=? AND status IN ('retry_wait','pending')")
+      .run(now, now, outbox.id);
+    if (scheduled.changes === 0) return res.status(409).json({ ok: false, error: "not_retryable" });
+    const result = await deliverOutbox(outbox.id);
+    if (result.error === "already_claimed" || result.error === "claim_lost") return res.status(409).json({ ok: false, error: result.error });
+    res.status(result.ok ? 200 : 502).json({ ok: result.ok, outboxId: outbox.id, error: result.ok ? undefined : "delivery_failed" });
+  } catch (error) {
+    console.error("outbox_retry_error", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
 });
 
-app.post("/telegram/webhook", async (req, res) => {
+app.post("/telegram/webhook", requireWebhookSecret, webhookJson, async (req, res) => {
   let telegramUpdateId = null;
   try {
-    if (!process.env.WEBHOOK_SECRET && process.env.NODE_ENV !== "test") {
-      return res.status(503).json({ ok: false, error: "webhook_not_configured" });
-    }
-    const secret = req.get("X-Telegram-Bot-Api-Secret-Token");
-    if (process.env.WEBHOOK_SECRET && secret !== process.env.WEBHOOK_SECRET) {
-      return res.status(403).json({ ok: false, error: "forbidden" });
-    }
-
     const update = req.body;
+    if (!update || typeof update !== "object" || Array.isArray(update)) {
+      return res.status(400).json({ ok: false, error: "invalid_update" });
+    }
     if (typeof update.update_id === "number") {
       telegramUpdateId = update.update_id;
       const reserved = db.prepare("INSERT OR IGNORE INTO telegram_updates (id, update_id, event_type, received_at) VALUES (?, ?, 'received', ?)")
@@ -364,12 +396,22 @@ for (const filename of ["styles.css", "script.js"]) {
   });
 }
 
+app.use((error, req, res, next) => {
+  if (error?.type === "entity.too.large") return res.status(413).json({ ok: false, error: "payload_too_large" });
+  if (error instanceof SyntaxError && Object.prototype.hasOwnProperty.call(error, "body")) {
+    return res.status(400).json({ ok: false, error: "invalid_json" });
+  }
+  next(error);
+});
+
 if (require.main === module) {
   const server = app.listen(port, host, () => {
     console.log(`Black Carp server: http://${host}:${port}`);
     console.log(`API: http://${host}:${port}/api/booking/submit`);
   });
-  setInterval(deliverDueOutbox, 60_000).unref();
+  setInterval(() => {
+    deliverDueOutbox().catch((error) => console.error("outbox_worker_error", error));
+  }, 60_000).unref();
   const shutdown = () => {
     server.close(() => {
       db.close();
@@ -381,7 +423,7 @@ if (require.main === module) {
   process.once("SIGINT", shutdown);
 }
 
-module.exports = { app, db };
+module.exports = { app, db, deliverDueOutbox };
 
 async function handleStart(message) {
   const publicCode = message.text.split(/\s+/)[1]?.trim();
@@ -405,7 +447,16 @@ async function handleStart(message) {
   }
 
   const now = new Date().toISOString();
+  let linkConflict = false;
   withTransaction(() => {
+    const current = db.prepare("SELECT client_id FROM booking_requests WHERE id=?").get(booking.id);
+    if (current?.client_id) {
+      const linkedClient = db.prepare("SELECT telegram_user_id FROM clients WHERE id=?").get(current.client_id);
+      if (!linkedClient || String(linkedClient.telegram_user_id) !== String(message.from.id)) {
+        linkConflict = true;
+        return;
+      }
+    }
     const clientId = upsertClient(message.from, message.chat.id, now);
     db.prepare(`
       UPDATE booking_requests
@@ -414,6 +465,11 @@ async function handleStart(message) {
     `).run(clientId, now, now, booking.id);
     appendCrmActivity(booking.id, "client", String(message.from.id), "telegram_linked", null);
   });
+
+  if (linkConflict) {
+    await sendTelegramMessage(message.chat.id, "Эта заявка уже связана с другим Telegram-профилем. Свяжитесь с мастером по указанному ранее контакту.");
+    return null;
+  }
 
   await sendTelegramMessage(message.chat.id, [
     "Ваша заявка получена.",
@@ -459,15 +515,18 @@ async function handleClientMessage(message) {
     return null;
   }
 
-  const sent = await notifyMasterText([
-    `Дополнительный комментарий к заявке #${booking.public_code}`,
-    `Клиент: ${formatTelegramUser(message.from)}`,
-    "",
-    text
-  ].join("\n"));
-
-  appendCrmActivity(booking.id, "client", String(message.from.id), "client_message", { text, delivered: sent.ok });
-  await sendTelegramMessage(message.chat.id, sent.ok ? "Комментарий передан мастеру." : "Комментарий сохранён. Мастер увидит его, когда связь восстановится.");
+  const now = new Date().toISOString();
+  let outboxIds = [];
+  withTransaction(() => {
+    const activityId = appendCrmActivity(booking.id, "client", String(message.from.id), "client_message", { text, delivered: false, delivery: "queued" });
+    outboxIds = enqueueClientMessageNotification(booking.id, {
+      activityId,
+      clientLabel: formatTelegramUser(message.from),
+      text
+    }, now);
+  });
+  const sent = await deliverOutboxIds(outboxIds);
+  await sendTelegramMessage(message.chat.id, sent.ok ? "Комментарий передан мастеру." : "Комментарий сохранён. Доставка будет повторена автоматически.");
   return booking.id;
 }
 
@@ -550,15 +609,6 @@ async function notifyMaster(payload, chatId) {
   };
 
   return sendTelegramMessage(chatId, masterCardText(payload), replyMarkup);
-}
-
-async function notifyMasterText(text, replyMarkup) {
-  if (!process.env.BOT_TOKEN || !masterIds().length) {
-    return { ok: false, error: "bot_not_configured" };
-  }
-
-  const results = await Promise.all(masterIds().map((chatId) => sendTelegramMessage(chatId, text, replyMarkup)));
-  return results.some((item) => item.ok) ? { ok: true } : (results[0] || { ok: false, error: "delivery_failed" });
 }
 
 async function sendTelegramMessage(chatId, text, replyMarkup) {
@@ -911,11 +961,58 @@ function masterIds() {
 }
 
 function requiredConfiguration() {
-  const missing = ["BOT_TOKEN", "WEBHOOK_SECRET", "SITE_URL", "ALLOWED_ORIGINS"]
+  const missing = ["BOT_TOKEN", "WEBHOOK_SECRET", "DEPLOY_PROBE_TOKEN", "SITE_URL", "ALLOWED_ORIGINS"]
     .filter((key) => !String(process.env[key] || "").trim());
   if (!masterIds().length) missing.push("MASTER_CHAT_IDS");
   if (!masterTelegramIds().length) missing.push("MASTER_TELEGRAM_IDS");
+  if (process.env.NODE_ENV === "production" && !String(process.env.TRUST_PROXY || "").trim()) missing.push("TRUST_PROXY");
+  if (process.env.NODE_ENV === "production") {
+    const runtimeRevision = String(process.env.RELEASE_SHA || "").trim();
+    if (!/^[a-f0-9]{40}$/i.test(buildRevision) || runtimeRevision !== buildRevision) missing.push("RELEASE_SHA");
+  }
   return missing;
+}
+
+function releaseSha() {
+  return buildRevision || String(process.env.RELEASE_SHA || "unknown").trim();
+}
+
+function readBuildRevision() {
+  try {
+    const value = fs.readFileSync(path.join(rootDir, "REVISION"), "utf8").trim();
+    return /^[a-f0-9]{40}$/i.test(value) ? value : "";
+  } catch {
+    return "";
+  }
+}
+
+function requireDeployProbeToken(req, res, next) {
+  const expected = Buffer.from(String(process.env.DEPLOY_PROBE_TOKEN || ""));
+  const provided = Buffer.from(String(req.get("X-Black-Carp-Probe-Token") || ""));
+  if (!expected.length || expected.length !== provided.length || !crypto.timingSafeEqual(expected, provided)) {
+    return res.status(403).json({ ok:false, error:"forbidden" });
+  }
+  next();
+}
+
+function configuredTrustProxy() {
+  const value = String(process.env.TRUST_PROXY || "").trim();
+  if (!value || value === "false") return false;
+  if (value === "true" || /^\d+$/.test(value)) {
+    throw new Error("TRUST_PROXY must name trusted proxy ranges; blanket or hop-count trust is not allowed");
+  }
+  return value;
+}
+
+function requireWebhookSecret(req, res, next) {
+  if (!process.env.WEBHOOK_SECRET && process.env.NODE_ENV !== "test") {
+    return res.status(503).json({ ok: false, error: "webhook_not_configured" });
+  }
+  const secret = req.get("X-Telegram-Bot-Api-Secret-Token");
+  if (process.env.WEBHOOK_SECRET && secret !== process.env.WEBHOOK_SECRET) {
+    return res.status(403).json({ ok: false, error: "forbidden" });
+  }
+  next();
 }
 
 function bookingRateLimit(req, res, next) {
@@ -1008,8 +1105,27 @@ function loadEnvFile(filePath) {
 }
 
 function runMigrations(database) {
+  const currentVersion = Number(database.prepare("PRAGMA user_version").get().user_version || 0);
+  assertSupportedDatabaseVersion(database);
+  if (currentVersion === LATEST_SCHEMA_VERSION) return;
+
   database.exec("BEGIN IMMEDIATE");
   try {
+    if (currentVersion < 1) migrateToVersion1(database);
+    if (currentVersion < 2) migrateToVersion2(database);
+    database.exec(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}; COMMIT`);
+  } catch (error) {
+    try { database.exec("ROLLBACK"); } catch {}
+    throw error;
+  }
+}
+
+function assertSupportedDatabaseVersion(database) {
+  const version = Number(database.prepare("PRAGMA user_version").get().user_version || 0);
+  if (version > LATEST_SCHEMA_VERSION) throw new Error(`unsupported_database_version:${version}`);
+}
+
+function migrateToVersion1(database) {
   const columns = new Set(database.prepare("PRAGMA table_info(booking_requests)").all().map((row) => row.name));
   const additions = [
     ["client_name", "TEXT"],
@@ -1072,27 +1188,44 @@ function runMigrations(database) {
     CREATE INDEX IF NOT EXISTS idx_crm_notes_request_id ON crm_notes(request_id);
     CREATE INDEX IF NOT EXISTS idx_crm_activity_request_id ON crm_activity(request_id);
     CREATE INDEX IF NOT EXISTS idx_notification_outbox_pending ON notification_outbox(status, next_attempt_at);
-    UPDATE notification_outbox SET status='retry_wait', next_attempt_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE status='sending';
   `);
   const outboxColumns = new Set(database.prepare("PRAGMA table_info(notification_outbox)").all().map((row) => row.name));
   if (!outboxColumns.has("recipient_chat_id")) database.exec("ALTER TABLE notification_outbox ADD COLUMN recipient_chat_id TEXT");
   const defaultRecipient = masterIds()[0] || null;
   if (defaultRecipient) database.prepare("UPDATE notification_outbox SET recipient_chat_id=? WHERE recipient_chat_id IS NULL").run(defaultRecipient);
-    database.exec("PRAGMA user_version = 1; COMMIT");
-  } catch (error) {
-    try { database.exec("ROLLBACK"); } catch {}
-    throw error;
+}
+
+function migrateToVersion2(database) {
+  const columns = new Set(database.prepare("PRAGMA table_info(notification_outbox)").all().map((row) => row.name));
+  for (const [name, definition] of [
+    ["payload_json", "TEXT"],
+    ["claim_token", "TEXT"],
+    ["claimed_at", "TEXT"]
+  ]) {
+    if (!columns.has(name)) database.exec(`ALTER TABLE notification_outbox ADD COLUMN ${name} ${definition}`);
   }
 }
 
 function backupDatabaseBeforeMigration(database, existed) {
   if (!existed || process.env.NODE_ENV === "test") return;
   const version = database.prepare("PRAGMA user_version").get().user_version;
-  if (version >= 1) return;
+  if (version >= LATEST_SCHEMA_VERSION) return;
   const backupDir = path.join(path.dirname(dbPath), "backups");
   fs.mkdirSync(backupDir, { recursive: true });
-  const backupPath = path.join(backupDir, `black-carp-pre-v1-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`);
+  fs.chmodSync(backupDir, 0o700);
+  const backupPath = path.join(backupDir, `black-carp-pre-v${LATEST_SCHEMA_VERSION}-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`);
   database.exec(`VACUUM INTO '${backupPath.replace(/'/g, "''")}'`);
+  fs.chmodSync(backupPath, 0o600);
+}
+
+function recoverStaleOutboxClaims(database) {
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - outboxClaimLeaseMs()).toISOString();
+  database.prepare(`
+    UPDATE notification_outbox
+    SET status='retry_wait', next_attempt_at=?, claim_token=NULL, claimed_at=NULL, updated_at=?
+    WHERE status='sending' AND COALESCE(claimed_at, updated_at) <= ?
+  `).run(now.toISOString(), now.toISOString(), cutoff);
 }
 
 function normalizeShortText(value, maxLength = 2000) {
@@ -1125,7 +1258,7 @@ function validateContact(payload) {
 }
 
 function masterTelegramIds() {
-  return String(process.env.MASTER_TELEGRAM_IDS || process.env.MASTER_CHAT_IDS || process.env.MASTER_CHAT_ID || "")
+  return String(process.env.MASTER_TELEGRAM_IDS || "")
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
@@ -1235,8 +1368,10 @@ function crmDetail(row) {
 }
 
 function appendCrmActivity(requestId, actorType, actorId, eventType, payload) {
+  const activityId = `act_${crypto.randomUUID()}`;
   db.prepare("INSERT INTO crm_activity (id, request_id, actor_type, actor_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(`act_${crypto.randomUUID()}`, requestId, actorType, actorId || null, eventType, payload ? JSON.stringify(payload) : null, new Date().toISOString());
+    .run(activityId, requestId, actorType, actorId || null, eventType, payload ? JSON.stringify(payload) : null, new Date().toISOString());
+  return activityId;
 }
 
 function withTransaction(callback) {
@@ -1316,22 +1451,48 @@ function maxAttachmentBytes() {
 }
 
 function enqueueMasterNotification(requestId, now) {
+  return enqueueNotification(requestId, "master_new_request", null, now);
+}
+
+function enqueueClientMessageNotification(requestId, payload, now) {
+  return enqueueNotification(requestId, "client_message", payload, now);
+}
+
+function enqueueNotification(requestId, kind, payload, now) {
   const recipients = masterIds().length ? masterIds() : [null];
-  const insert = db.prepare("INSERT INTO notification_outbox (id, request_id, kind, recipient_chat_id, status, attempts, next_attempt_at, created_at, updated_at) VALUES (?, ?, 'master_new_request', ?, 'pending', 0, ?, ?, ?)");
-  for (const recipient of recipients) insert.run(`out_${crypto.randomUUID()}`, requestId, recipient, now, now, now);
+  const insert = db.prepare(`
+    INSERT INTO notification_outbox (
+      id, request_id, kind, recipient_chat_id, payload_json,
+      status, attempts, next_attempt_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+  `);
+  return recipients.map((recipient) => {
+    const id = `out_${crypto.randomUUID()}`;
+    insert.run(id, requestId, kind, recipient, payload ? JSON.stringify(payload) : null, now, now, now);
+    return id;
+  });
 }
 
 async function deliverPendingNotification(requestId) {
-  const outboxes = db.prepare("SELECT id FROM notification_outbox WHERE request_id = ? AND status IN ('pending','retry_wait') ORDER BY created_at ASC").all(requestId);
-  if (!outboxes.length) return { ok: true };
-  const results = await Promise.all(outboxes.map((outbox) => deliverOutbox(outbox.id)));
+  const outboxes = db.prepare("SELECT id FROM notification_outbox WHERE request_id = ? AND kind='master_new_request' AND status IN ('pending','retry_wait') ORDER BY created_at ASC").all(requestId);
+  return deliverOutboxIds(outboxes.map((outbox) => outbox.id), true);
+}
+
+async function deliverOutboxIds(outboxIds, emptyIsSuccess = false) {
+  if (!outboxIds.length) return { ok: emptyIsSuccess, error: emptyIsSuccess ? undefined : "no_recipients" };
+  const results = await Promise.all(outboxIds.map((outboxId) => deliverOutbox(outboxId)));
   return results.find((item) => item.ok) || results[0];
 }
 
 async function deliverDueOutbox() {
+  recoverStaleOutboxClaims(db);
   const due = db.prepare("SELECT id FROM notification_outbox WHERE status IN ('pending','retry_wait') AND next_attempt_at <= ? ORDER BY next_attempt_at ASC LIMIT 20")
     .all(new Date().toISOString());
-  await Promise.all(due.map((item) => deliverOutbox(item.id)));
+  const results = await Promise.allSettled(due.map((item) => deliverOutbox(item.id)));
+  for (const result of results) {
+    if (result.status === "rejected") console.error("outbox_delivery_error", result.reason);
+  }
+  return results;
 }
 
 async function deliverOutbox(outboxId) {
@@ -1341,25 +1502,86 @@ async function deliverOutbox(outboxId) {
   const request = crmRequestById(outbox.request_id);
   if (!request) return { ok: false };
   const now = new Date().toISOString();
-  const claimed = db.prepare("UPDATE notification_outbox SET status='sending', attempts=attempts+1, updated_at=? WHERE id=? AND status IN ('pending','retry_wait')").run(now, outbox.id);
+  const claimToken = crypto.randomUUID();
+  const claimed = db.prepare("UPDATE notification_outbox SET status='sending', attempts=attempts+1, claim_token=?, claimed_at=?, updated_at=? WHERE id=? AND status IN ('pending','retry_wait')")
+    .run(claimToken, now, now, outbox.id);
   if (claimed.changes === 0) return { ok: false, error: "already_claimed" };
-  const attachmentCount = db.prepare("SELECT COUNT(*) AS count FROM booking_attachments WHERE request_id=?").get(request.id).count;
-  const result = await notifyMaster({ ...bookingPayloadFromRow(request), requestId: request.id, publicCode: request.public_code, clientName: request.client_name, contactValue: request.contact_value, attachmentCount }, outbox.recipient_chat_id);
+  const result = await deliverOutboxNotification(outbox, request);
+  const completedAt = new Date().toISOString();
   if (result.ok) {
-    withTransaction(() => {
-      db.prepare("UPDATE notification_outbox SET status='sent', sent_at=?, last_error=NULL, updated_at=? WHERE id=?").run(now, now, outbox.id);
-      db.prepare("UPDATE booking_requests SET master_notified_at=?, master_notify_error=NULL, updated_at=? WHERE id=?").run(now, now, request.id);
-      appendCrmActivity(request.id, "system", null, "master_notified", { outboxId: outbox.id });
+    const committed = withTransaction(() => {
+      const updated = db.prepare("UPDATE notification_outbox SET status='sent', sent_at=?, last_error=NULL, claim_token=NULL, claimed_at=NULL, updated_at=? WHERE id=? AND status='sending' AND claim_token=?")
+        .run(completedAt, completedAt, outbox.id, claimToken);
+      if (updated.changes === 0) return false;
+      if (outbox.kind === "master_new_request") {
+        const remaining = db.prepare("SELECT COUNT(*) AS count FROM notification_outbox WHERE request_id=? AND kind='master_new_request' AND status!='sent'").get(request.id).count;
+        db.prepare("UPDATE booking_requests SET master_notified_at=COALESCE(master_notified_at, ?), master_notify_error=CASE WHEN ? THEN master_notify_error ELSE NULL END, updated_at=? WHERE id=?")
+          .run(completedAt, remaining ? 1 : 0, completedAt, request.id);
+        appendCrmActivity(request.id, "system", null, "master_notified", { outboxId: outbox.id });
+      } else if (outbox.kind === "client_message") {
+        updateClientMessageDelivery(outbox, true, null);
+      }
+      return true;
     });
+    if (!committed) return { ok: false, error: "claim_lost" };
     return { ok: true };
   }
   const attempts = Number(outbox.attempts || 0) + 1;
   const delayMinutes = Math.min(60, 2 ** Math.min(attempts, 6));
   const nextAttempt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();
-  withTransaction(() => {
-    db.prepare("UPDATE notification_outbox SET status='retry_wait', next_attempt_at=?, last_error=?, updated_at=? WHERE id=?").run(nextAttempt, String(result.error || "delivery_failed").slice(0, 500), now, outbox.id);
-    db.prepare("UPDATE booking_requests SET master_notify_error=?, updated_at=? WHERE id=?").run(String(result.error || "delivery_failed").slice(0, 500), now, request.id);
-    appendCrmActivity(request.id, "system", null, "master_notify_failed", { outboxId: outbox.id, error: result.error || "delivery_failed" });
+  const lastError = String(result.error || "delivery_failed").slice(0, 500);
+  const committed = withTransaction(() => {
+    const updated = db.prepare("UPDATE notification_outbox SET status='retry_wait', next_attempt_at=?, last_error=?, claim_token=NULL, claimed_at=NULL, updated_at=? WHERE id=? AND status='sending' AND claim_token=?")
+      .run(nextAttempt, lastError, completedAt, outbox.id, claimToken);
+    if (updated.changes === 0) return false;
+    if (outbox.kind === "master_new_request") {
+      db.prepare("UPDATE booking_requests SET master_notify_error=?, updated_at=? WHERE id=?").run(lastError, completedAt, request.id);
+      appendCrmActivity(request.id, "system", null, "master_notify_failed", { outboxId: outbox.id, error: result.error || "delivery_failed" });
+    } else if (outbox.kind === "client_message") {
+      updateClientMessageDelivery(outbox, false, lastError);
+    }
+    return true;
   });
+  if (!committed) return { ok: false, error: "claim_lost" };
   return { ok: false, error: result.error };
+}
+
+async function deliverOutboxNotification(outbox, request) {
+  if (outbox.kind === "master_new_request") {
+    const attachmentCount = db.prepare("SELECT COUNT(*) AS count FROM booking_attachments WHERE request_id=?").get(request.id).count;
+    return notifyMaster({ ...bookingPayloadFromRow(request), requestId: request.id, publicCode: request.public_code, clientName: request.client_name, contactValue: request.contact_value, attachmentCount }, outbox.recipient_chat_id);
+  }
+  if (outbox.kind === "client_message") {
+    const payload = parseJson(outbox.payload_json);
+    if (!payload.text) return { ok: false, error: "invalid_outbox_payload" };
+    return sendTelegramMessage(outbox.recipient_chat_id, [
+      `Дополнительный комментарий к заявке #${request.public_code}`,
+      `Клиент: ${payload.clientLabel || "неизвестно"}`,
+      "",
+      payload.text
+    ].join("\n"));
+  }
+  return { ok: false, error: "unsupported_outbox_kind" };
+}
+
+function updateClientMessageDelivery(outbox, delivered, error) {
+  const outboxPayload = parseJson(outbox.payload_json);
+  if (!outboxPayload.activityId) return;
+  const activity = db.prepare("SELECT payload_json FROM crm_activity WHERE id=? AND request_id=?").get(outboxPayload.activityId, outbox.request_id);
+  if (!activity) return;
+  const payload = parseJson(activity.payload_json);
+  if (delivered) {
+    payload.delivered = true;
+    payload.delivery = "delivered";
+    delete payload.lastError;
+  } else if (!payload.delivered) {
+    payload.delivered = false;
+    payload.delivery = "queued";
+    payload.lastError = error;
+  }
+  db.prepare("UPDATE crm_activity SET payload_json=? WHERE id=?").run(JSON.stringify(payload), outboxPayload.activityId);
+}
+
+function outboxClaimLeaseMs() {
+  return 5 * 60_000;
 }

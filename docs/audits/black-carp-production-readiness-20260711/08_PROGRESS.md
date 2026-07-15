@@ -9,14 +9,14 @@
 - [x] Negative paths classified
 - [x] Findings classified
 - [x] Fix plan written
-- [ ] P0/P1 fixes implemented or explicitly deferred
-- [ ] Verification complete
+- [x] P0/P1 fixes implemented or explicitly deferred
+- [x] Local verification complete
 - [ ] Stop Gates passed
 
 ## Next
 
-Commit audit artifacts, create the implementation branch, then execute Cluster 1.
+Confirm GitHub Docker smoke, rotate runtime secrets and install the host deploy/rollback/backup contracts.
 
 ## Blockers
 
-None for local implementation. Production credentials/data and physical-device checks are later external gates.
+Local Browser QA is complete. Docker daemon/CI, production credentials, secret rotation, host scripts, off-host backup and physical-device checks remain external gates.

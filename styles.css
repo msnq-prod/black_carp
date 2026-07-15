@@ -1277,6 +1277,43 @@ p {
 }
 
 /* Luxury Body Menu (Plan B) */
+.body-view-fieldset {
+  min-width: 0;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+}
+
+.body-view-fieldset legend {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 560;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.body-view-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.body-view-option {
+  min-height: 44px;
+  border: 1px solid rgba(238, 230, 214, 0.14);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.body-view-option[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: rgba(238, 230, 214, 0.06);
+  color: var(--ink);
+}
+
 .luxury-body-menu {
   display: grid;
   gap: 10px;
@@ -1676,6 +1713,19 @@ p {
   margin-bottom: 20px;
 }
 
+.upload-restore-notice {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--ink);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.upload-restore-notice[hidden] {
+  display: none;
+}
+
 .uploader-preview-item {
   position: relative;
   height: 80px;
@@ -1932,6 +1982,28 @@ p {
   gap: 8px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
   animation: toastIn 350ms cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+.wizard-slides.is-transitioning {
+  pointer-events: none;
+}
+
+.option-card:focus-visible,
+.uploader-zone:focus-visible,
+.btn-remove-file:focus-visible,
+.btn-remove-item:focus-visible,
+.luxury-zone-btn:focus-visible,
+.luxury-subzone-btn:focus-visible,
+.body-view-option:focus-visible,
+.size-preset-card:focus-visible,
+.wizard-btn-back:focus-visible,
+.btn-restart:focus-visible,
+.route-modal__close:focus-visible,
+.booking-contact input:focus-visible,
+.booking-contact select:focus-visible,
+.booking-consent input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
 }
 
 @keyframes toastIn {

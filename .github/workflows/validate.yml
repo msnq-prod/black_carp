@@ -1,5 +1,8 @@
 name: Validate
 
+permissions:
+  contents: read
+
 on:
   push:
     branches:
@@ -10,6 +13,14 @@ on:
 jobs:
   application:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMPOSE_FILE: docker-compose.production.example.yml
+      COMPOSE_PROJECT_NAME: black-carp-ci
+      BLACK_CARP_ENV_FILE: ${{ github.workspace }}/.env.example
+      BLACK_CARP_DATA_DIR: ${{ runner.temp }}/black-carp-data
+      BLACK_CARP_UPLOADS_DIR: ${{ runner.temp }}/black-carp-uploads
+      BLACK_CARP_RELEASE_SHA: ${{ github.sha }}
 
     steps:
       - name: Checkout
@@ -33,3 +44,37 @@ jobs:
           test -f crm/index.html
           npm run check
           npm test
+
+      - name: Verify backup and restore
+        env:
+          NODE_ENV: test
+          DB_PATH: ${{ runner.temp }}/black-carp-backup-source.sqlite
+          BLACK_CARP_APP_DIR: ${{ github.workspace }}
+          BLACK_CARP_BACKUP_DIR: ${{ runner.temp }}/black-carp-backups
+          BLACK_CARP_DB_PATH: ${{ runner.temp }}/black-carp-backup-source.sqlite
+          BLACK_CARP_UPLOADS_PATH: ${{ runner.temp }}/black-carp-backup-uploads
+        run: |
+          mkdir -p "$BLACK_CARP_UPLOADS_PATH/booking"
+          node -e "const {db}=require('./server'); db.close()"
+          BLACK_CARP_NODE_BIN="$(command -v node)" ./ops/backup.sh
+          test "$(find "$BLACK_CARP_BACKUP_DIR" -maxdepth 1 -name '*.sha256' -type f | wc -l)" -eq 1
+
+      - name: Build and smoke-test production image
+        run: |
+          mkdir -p "$BLACK_CARP_DATA_DIR" "$BLACK_CARP_UPLOADS_DIR"
+          docker compose config --quiet
+          docker compose build --pull
+          docker compose up --detach
+          curl --fail --show-error --silent --retry 12 --retry-delay 2 --retry-all-errors http://127.0.0.1:3001/health > /dev/null
+          curl --fail --show-error --silent http://127.0.0.1:3001/ > /dev/null
+          curl --fail --show-error --silent http://127.0.0.1:3001/crm/ > /dev/null
+          test "$(docker compose exec -T black-carp id -u | tr -d '\r')" = "1000"
+          test "$(stat -c '%u' "$BLACK_CARP_DATA_DIR")" = "1000"
+          test "$(docker image inspect "black-carp:$BLACK_CARP_RELEASE_SHA" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$BLACK_CARP_RELEASE_SHA"
+          docker compose exec -T black-carp test -s /app/data/black-carp.sqlite
+          docker compose restart black-carp
+          curl --fail --show-error --silent --retry 12 --retry-delay 2 --retry-all-errors http://127.0.0.1:3001/health > /dev/null
+
+      - name: Stop production smoke
+        if: always()
+        run: docker compose down --remove-orphans
