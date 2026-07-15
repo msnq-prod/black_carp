@@ -280,6 +280,27 @@ test("health reports readiness and booking submit is rate limited", async () => 
   assert.equal(limited.status, 429);
 });
 
+test("production health fails closed for bot username and CRM URL", async () => {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousBotUsername = process.env.BOT_USERNAME;
+  const previousCrmUrl = process.env.CRM_WEBAPP_URL;
+  process.env.NODE_ENV = "production";
+  delete process.env.BOT_USERNAME;
+  delete process.env.CRM_WEBAPP_URL;
+  try {
+    const health = await fetch(`${baseUrl}/health`);
+    const body = await health.json();
+    assert.equal(health.status, 503);
+    assert.equal(body.missing.includes("BOT_USERNAME"), true);
+    assert.equal(body.missing.includes("CRM_WEBAPP_URL"), true);
+  } finally {
+    process.env.NODE_ENV = previousNodeEnv;
+    if (previousBotUsername === undefined) delete process.env.BOT_USERNAME;
+    else process.env.BOT_USERNAME = previousBotUsername;
+    process.env.CRM_WEBAPP_URL = previousCrmUrl;
+  }
+});
+
 test("deploy readiness is fail-closed and verifies Telegram delivery access", async () => {
   const denied = await fetch(`${baseUrl}/api/ops/readiness`, { method:"POST" });
   assert.equal(denied.status, 403);

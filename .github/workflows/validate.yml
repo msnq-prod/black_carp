@@ -23,12 +23,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
 
       - name: Use Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -43,6 +43,8 @@ jobs:
           test -f script.js
           test -d assets
           test -f crm/index.html
+          test -x ops/verify-release-image.sh
+          bash -n ops/backup.sh ops/verify-restore.sh ops/verify-release-image.sh
           npm run check
           npm test
 
@@ -90,7 +92,7 @@ jobs:
           curl --fail --show-error --silent --retry 12 --retry-delay 2 --retry-all-errors http://127.0.0.1:3002/health > "$RUNNER_TEMP/black-carp-candidate-health.json"
           HEALTH_FILE="$RUNNER_TEMP/black-carp-candidate-health.json" node -e 'const fs=require("fs"); const body=JSON.parse(fs.readFileSync(process.env.HEALTH_FILE,"utf8")); if (!body.ok || body.release !== process.env.BLACK_CARP_RELEASE_SHA) process.exit(1)'
           test "$(docker compose -p black-carp-ci-candidate -f docker-compose.production.candidate.example.yml exec -T black-carp-candidate id -u | tr -d '\r')" = "1000"
-          curl --fail --show-error --silent http://127.0.0.1:3001/health > /dev/null
+          curl --fail --show-error --silent http://127.0.0.1:3002/health > /dev/null
 
       - name: Stop candidate smoke
         if: always()
@@ -105,3 +107,56 @@ jobs:
       - name: Stop production smoke
         if: always()
         run: docker compose down --remove-orphans
+
+
+  publish:
+    needs: application
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    env:
+      BLACK_CARP_RELEASE_SHA: ${{ github.sha }}
+      IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Publish immutable release image
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          image="${IMAGE_REPOSITORY,,}"
+          printf '%s\n' "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker buildx build \
+            --pull \
+            --file Dockerfile \
+            --build-arg VCS_REF="$BLACK_CARP_RELEASE_SHA" \
+            --tag "$image:$BLACK_CARP_RELEASE_SHA" \
+            --push \
+            --provenance=false \
+            --sbom=false \
+            --metadata-file "$RUNNER_TEMP/black-carp-image-metadata.json" \
+            .
+          digest="$(node -e 'const fs=require("fs"); const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(m["containerimage.digest"] || "")' "$RUNNER_TEMP/black-carp-image-metadata.json")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf '{"release_sha":"%s","image":"%s","digest":"%s","image_ref":"%s@%s"}\n' "$BLACK_CARP_RELEASE_SHA" "$image" "$digest" "$image" "$digest" > "$RUNNER_TEMP/black-carp-release-manifest.json"
+
+      - name: Upload immutable release manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: black-carp-release-${{ github.sha }}
+          path: ${{ runner.temp }}/black-carp-release-manifest.json
+          if-no-files-found: error
+          retention-days: 14

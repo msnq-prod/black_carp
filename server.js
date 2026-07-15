@@ -409,9 +409,11 @@ if (require.main === module) {
     console.log(`Black Carp server: http://${host}:${port}`);
     console.log(`API: http://${host}:${port}/api/booking/submit`);
   });
-  setInterval(() => {
-    deliverDueOutbox().catch((error) => console.error("outbox_worker_error", error));
-  }, 60_000).unref();
+  if (process.env.DISABLE_OUTBOX_WORKER !== "1") {
+    setInterval(() => {
+      deliverDueOutbox().catch((error) => console.error("outbox_worker_error", error));
+    }, 60_000).unref();
+  }
   const shutdown = () => {
     server.close(() => {
       db.close();
@@ -965,12 +967,29 @@ function requiredConfiguration() {
     .filter((key) => !String(process.env[key] || "").trim());
   if (!masterIds().length) missing.push("MASTER_CHAT_IDS");
   if (!masterTelegramIds().length) missing.push("MASTER_TELEGRAM_IDS");
-  if (process.env.NODE_ENV === "production" && !String(process.env.TRUST_PROXY || "").trim()) missing.push("TRUST_PROXY");
+  if (process.env.NODE_ENV === "production") {
+    if (!String(process.env.TRUST_PROXY || "").trim()) missing.push("TRUST_PROXY");
+    const configuredBotUsername = String(process.env.BOT_USERNAME || "").replace(/^@/, "");
+    if (!/^[A-Za-z0-9_]{5,32}$/.test(configuredBotUsername)) missing.push("BOT_USERNAME");
+    const configuredSiteUrl = parseHttpsUrl(process.env.SITE_URL);
+    if (!configuredSiteUrl && !missing.includes("SITE_URL")) missing.push("SITE_URL");
+    const configuredCrmUrl = parseHttpsUrl(process.env.CRM_WEBAPP_URL);
+    if (!configuredCrmUrl || configuredCrmUrl.pathname.replace(/\/$/, "") !== "/crm") missing.push("CRM_WEBAPP_URL");
+  }
   if (process.env.NODE_ENV === "production") {
     const runtimeRevision = String(process.env.RELEASE_SHA || "").trim();
     if (!/^[a-f0-9]{40}$/i.test(buildRevision) || runtimeRevision !== buildRevision) missing.push("RELEASE_SHA");
   }
   return missing;
+}
+
+function parseHttpsUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    return parsed.protocol === "https:" && !parsed.username && !parsed.password ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function releaseSha() {
@@ -1474,6 +1493,7 @@ function enqueueNotification(requestId, kind, payload, now) {
 }
 
 async function deliverPendingNotification(requestId) {
+  if (process.env.DISABLE_TELEGRAM_DELIVERY === "1") return { ok: false, error: "telegram_delivery_disabled" };
   const outboxes = db.prepare("SELECT id FROM notification_outbox WHERE request_id = ? AND kind='master_new_request' AND status IN ('pending','retry_wait') ORDER BY created_at ASC").all(requestId);
   return deliverOutboxIds(outboxes.map((outbox) => outbox.id), true);
 }

@@ -50,8 +50,11 @@ export BLACK_CARP_UID="$(id -u black-carp)"
 export BLACK_CARP_GID="$(id -g black-carp)"
 docker compose -f docker-compose.production.example.yml config --quiet
 docker compose -f docker-compose.production.example.yml pull
+BLACK_CARP_IMAGE="$BLACK_CARP_IMAGE" ops/verify-release-image.sh "$BLACK_CARP_RELEASE_SHA" "$BLACK_CARP_IMAGE"
 docker compose -f docker-compose.production.example.yml up -d --no-build
 ```
+
+Для private GHCR host заранее получает отдельный read-only `packages:read` credential через защищённый Docker credential store. Token нельзя хранить в репозитории, env-файле приложения или передавать аргументом процесса. GitHub workflow публикует image только из успешного push в `main`, сохраняет digest manifest и передаёт host-скрипту полный `image@sha256`.
 
 Обычный `docker compose config` использовать в логах нельзя: он раскрывает значения из `env_file`. Для проверки применяется только `config --quiet`.
 
@@ -100,6 +103,7 @@ black-carp.art, www.black-carp.art {
 ```bash
 export COMPOSE_PROJECT_NAME=black-carp-candidate
 export BLACK_CARP_RELEASE_SHA=<40-char-sha>
+export BLACK_CARP_IMAGE="ghcr.io/<owner>/<image>@sha256:<verified-digest>"
 export BLACK_CARP_CANDIDATE_BIND_PORT=3002
 export BLACK_CARP_CANDIDATE_DOCKER_NETWORK=black-carp-candidate-<sha>
 export BLACK_CARP_CANDIDATE_DATA_DIR=/srv/releases/<sha>/candidate-data
@@ -108,7 +112,7 @@ export BLACK_CARP_CANDIDATE_ENV_FILE=/srv/releases/<sha>/candidate.env
 docker compose -f docker-compose.production.candidate.example.yml up -d
 ```
 
-После candidate health/UI smoke stack удаляется. SQLite и локальные uploads не допускают безопасный blue-green с двумя writable-копиями: перед финальным cutover host script блокирует новые записи, создаёт свежий проверенный backup, останавливает старый app и запускает новый image с единственными live bind mounts. Это контролируемый stop/start с коротким окном недоступности; zero-downtime для текущего storage не заявляется.
+Candidate Compose принудительно подставляет фиктивные Telegram credentials/API, отключает outbox worker и синхронную доставку. Для него нельзя вызывать Telegram readiness или подключать production env/storage напрямую. После health/UI smoke stack удаляется. SQLite и локальные uploads не допускают безопасный blue-green с двумя writable-копиями: перед финальным cutover host script блокирует новые записи, создаёт свежий проверенный backup, останавливает старый app и запускает новый image с единственными live bind mounts. Это контролируемый stop/start с коротким окном недоступности; zero-downtime для текущего storage не заявляется.
 
 Если нужно оставить только статический placeholder, используется `root * /data/black-carp` и `file_server`, но booking API, CRM и Telegram webhook в таком режиме работать не будут.
 
@@ -135,13 +139,14 @@ curl "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" \
 
 ## Важно
 
-`/usr/local/bin/black-carp-deploy <40-char-sha>` обязан развернуть ровно переданный commit: получить заранее собранный `BLACK_CARP_IMAGE` по digest (без rebuild на host), проверить его OCI revision label и `/app/REVISION`, создать и проверить backup, запустить изолированный candidate и выполнить health/UI smoke. Затем он переводит Caddy в maintenance, создаёт свежий backup, удаляет candidate, останавливает старый app и запускает новый image с единственными live bind mounts. Скрипт обязан поставить trap и самостоятельно вернуть предыдущую ревизию при любом обрыве cutover. Предыдущий image и backup сохраняются для rollback. `/usr/local/bin/black-carp-rollback <failed-sha>` обязан быть идемпотентным: ничего не менять, если failed SHA не был активирован, иначе вернуть предыдущую подтверждённую ревизию. Эти host scripts находятся вне репозитория и должны быть обновлены до включения workflow.
+`/usr/local/bin/black-carp-deploy <40-char-sha> <image@sha256:digest>` обязан развернуть ровно переданный commit: получить переданный immutable image (без rebuild на host), выполнить `ops/verify-release-image.sh`, создать и проверить backup, запустить изолированный candidate и выполнить health/UI smoke. Затем он переводит Caddy в maintenance, создаёт свежий backup, удаляет candidate, останавливает старый app и запускает новый image с единственными live bind mounts. Скрипт обязан поставить trap и самостоятельно вернуть предыдущую ревизию при любом обрыве cutover. Предыдущий image и backup сохраняются для rollback. `/usr/local/bin/black-carp-rollback <failed-sha>` обязан быть идемпотентным: ничего не менять, если failed SHA не был активирован, иначе вернуть предыдущую подтверждённую ревизию. Эти host scripts находятся вне репозитория и должны быть обновлены до включения workflow.
 
-Backup запускается не от root, а от выделенного пользователя `black-carp`; его UID/GID передаются Compose через `BLACK_CARP_UID`/`BLACK_CARP_GID`, поэтому он читает закрытые bind mounts. Cron явно задаёт production-пути `/srv/data/black-carp/black-carp.sqlite` и `/srv/uploads/black-carp`. `ops/backup.sh` сериализует запуски, проверяет SQLite, создаёт checksum и выполняет пробное восстановление. `BLACK_CARP_BACKUP_HOOK` может указывать на root-owned executable, который получает три аргумента — SQLite, uploads archive и checksum — и отправляет их в зашифрованное off-host хранилище.
+Backup запускается не от root, а от выделенного пользователя `black-carp`; его UID/GID передаются Compose через `BLACK_CARP_UID`/`BLACK_CARP_GID`, поэтому он читает закрытые bind mounts. Cron явно задаёт production-пути `/srv/data/black-carp/black-carp.sqlite` и `/srv/uploads/black-carp`. `ops/backup.sh` сериализует запуски, проверяет SQLite, создаёт checksum и проверяет восстановление во временный каталог; live restore/promote выполняет только host runbook. Production обязан задавать `BLACK_CARP_BACKUP_HOOK` на root-owned executable, который получает три аргумента — SQLite, uploads archive и checksum — отправляет их в зашифрованное off-host хранилище и обеспечивает remote retention/alerting.
 
 ```bash
 sudo install -d -o black-carp -g black-carp -m 700 /srv/backups/black-carp
 sudo install -m 0644 ops/black-carp-backup.cron.example /etc/cron.d/black-carp-backup
+# Validation only; this never swaps live bind mounts.
 ops/verify-restore.sh BACKUP.sqlite UPLOADS.tar.gz BACKUP.sha256
 ```
 

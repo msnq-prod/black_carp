@@ -36,6 +36,18 @@ services:
       HOST: 0.0.0.0
       PORT: 3001
       RELEASE_SHA: ${BLACK_CARP_RELEASE_SHA:?candidate release SHA is required}
+      BOT_TOKEN: candidate-disabled
+      BOT_USERNAME: blackcarp_candidate
+      WEBHOOK_SECRET: candidate-disabled
+      DEPLOY_PROBE_TOKEN: candidate-disabled
+      MASTER_CHAT_IDS: "0"
+      MASTER_TELEGRAM_IDS: "0"
+      SITE_URL: https://candidate.invalid
+      CRM_WEBAPP_URL: https://candidate.invalid/crm
+      ALLOWED_ORIGINS: https://candidate.invalid
+      TELEGRAM_API_BASE: http://127.0.0.1:9
+      DISABLE_OUTBOX_WORKER: "1"
+      DISABLE_TELEGRAM_DELIVERY: "1"
     ports:
       - "127.0.0.1:${BLACK_CARP_CANDIDATE_BIND_PORT:?candidate bind port is required}:3001"
     volumes:

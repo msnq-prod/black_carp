@@ -25,7 +25,9 @@ npm start
 
 - `MASTER_CHAT_IDS` — чаты, куда бот отправляет новые заявки.
 - `MASTER_TELEGRAM_IDS` — Telegram user ID мастеров с доступом в CRM.
+- `BOT_USERNAME` — username текущего бота без fallback; production health проверяет формат.
 - `CRM_WEBAPP_URL` — публичный HTTPS URL вида `https://domain.ru/crm`.
+- `SITE_URL` и `CRM_WEBAPP_URL` в production обязаны использовать HTTPS.
 - `TRUST_PROXY` — точный CIDR закрытой external network, общей только для backend и Caddy; `true` и числовой hop count запрещены.
 
 ## Telegram
@@ -46,9 +48,9 @@ curl "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" \
 - ежедневно бэкапить SQLite и uploads;
 - перед релизом выполнять `npm ci && npm run check && npm test`.
 
-Host-level deploy остаётся ограниченной инфраструктурной границей `/usr/local/bin/black-carp-deploy <sha>`; workflow передаёт точный проверенный commit и запрещает отмену активного deploy. Скрипт обязан выполнить backup, candidate smoke и атомарное переключение. При внешнем smoke failure workflow вызывает `/usr/local/bin/black-carp-rollback <sha>`.
+Host-level deploy остаётся ограниченной инфраструктурной границей `/usr/local/bin/black-carp-deploy <sha> <image@sha256:digest>`; workflow передаёт точный commit и immutable image manifest, а отмена активного deploy запрещена. Скрипт обязан проверить image по digest, выполнить backup, candidate smoke и контролируемый stop/start cutover с единственными writable SQLite/uploads. Zero-downtime для текущего storage не заявляется. При внешнем smoke failure workflow вызывает `/usr/local/bin/black-carp-rollback <sha>`.
 
-`ops/backup.sh` создаёт согласованный SQLite backup и архив uploads, checksum и пробное восстановление. Его нужно запускать от выделенного пользователя `black-carp`, а не root, с явными `BLACK_CARP_DB_PATH=/srv/data/black-carp/black-carp.sqlite` и `BLACK_CARP_UPLOADS_PATH=/srv/uploads/black-carp`. Для off-host копии задаётся исполняемый `BLACK_CARP_BACKUP_HOOK`; hook получает пути к SQLite, uploads archive и checksum.
+`ops/backup.sh` создаёт согласованный SQLite backup и архив uploads, checksum и проверяет восстановление во временный каталог. Это не заменяет operational restore/promote на host. Его нужно запускать от выделенного пользователя `black-carp`, а не root, с явными `BLACK_CARP_DB_PATH=/srv/data/black-carp/black-carp.sqlite` и `BLACK_CARP_UPLOADS_PATH=/srv/uploads/black-carp`. Без `BLACK_CARP_BACKUP_HOOK` копия остаётся local-only; production cron требует executable hook `/usr/local/bin/black-carp-backup-offsite`, remote retention и alerting.
 
 ```bash
 BLACK_CARP_NODE_BIN=/absolute/path/to/node22 \
@@ -56,8 +58,10 @@ BLACK_CARP_APP_DIR=/srv/www/black-carp \
 BLACK_CARP_BACKUP_DIR=/srv/backups/black-carp \
 BLACK_CARP_DB_PATH=/srv/data/black-carp/black-carp.sqlite \
 BLACK_CARP_UPLOADS_PATH=/srv/uploads/black-carp \
+BLACK_CARP_BACKUP_KEEP_DAYS=14 \
 ./ops/backup.sh
 
+# Validation only: extracts to a temporary directory and never replaces live data.
 ./ops/verify-restore.sh \
   /srv/backups/black-carp/black-carp-TIMESTAMP.sqlite \
   /srv/backups/black-carp/black-carp-uploads-TIMESTAMP.tar.gz \
