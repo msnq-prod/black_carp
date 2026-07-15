@@ -62,9 +62,10 @@
 - `npm audit --omit=dev`: zero known advisories.
 - `docker compose ... config --quiet`, YAML and shell syntax, `git diff --check`.
 - Browser smoke on fresh local server: public booking flow, body-side invariant, success response, CRM list/card, external refresh, note save and focus restoration at mobile viewport.
+- Docker image build and runtime smoke: health 200, embedded revision/OCI label match, non-root UID 1000, restart recovery and `/`/`/crm` availability.
 
 ### Pending external evidence
 
-- Docker daemon is unavailable locally; image build/runtime must be green in GitHub Validate.
+- GitHub Validate still needs to run on the branch; local Docker image/runtime smoke is green.
 - Host deploy/rollback/backup scripts, Caddy network, off-host destination and rotated Telegram secrets are not installed in this local change.
 - Physical Telegram WebView checks on iOS/Android remain deployment gates.

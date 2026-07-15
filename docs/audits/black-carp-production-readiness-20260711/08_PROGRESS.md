@@ -19,4 +19,4 @@ Confirm GitHub Docker smoke, rotate runtime secrets and install the host deploy/
 
 ## Blockers
 
-Local Browser QA is complete. Docker daemon/CI, production credentials, secret rotation, host scripts, off-host backup and physical-device checks remain external gates.
+Local Browser QA and Docker image/runtime smoke are complete. GitHub CI, production credentials, secret rotation, host scripts, off-host backup and physical-device checks remain external gates.

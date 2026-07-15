@@ -35,7 +35,7 @@
 - `npm run check` — pass;
 - `npm test` — 13/13 pass;
 - `npm audit --omit=dev` — 0 vulnerabilities;
-- `docker compose config --quiet` — pass; image build должен подтвердить GitHub CI, локальный Docker daemon выключен;
+- `docker compose config --quiet` — pass; local image build/runtime smoke pass (health, revision, non-root, restart, public and CRM routes);
 - browser QA — fresh local server, public booking flow, body-side invariant, success, CRM refresh/card/note save/focus and mobile geometry;
 - backup smoke — checksum, SQLite integrity, archive extraction and attachment readback pass.
 
