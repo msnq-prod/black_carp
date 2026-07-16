@@ -21,6 +21,7 @@ process.env.CRM_WEBAPP_URL = "https://black-carp.test/crm";
 process.env.SITE_URL = "https://black-carp.test";
 process.env.ALLOWED_ORIGINS = "https://black-carp.test";
 process.env.TRUST_PROXY = "loopback";
+process.env.TELEGRAM_TRANSPORT = "webhook";
 
 const { app, db, deliverDueOutbox } = require("../server");
 let server;

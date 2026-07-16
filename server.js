@@ -17,6 +17,7 @@ const port = Number(process.env.PORT || 3001);
 const botUsername = (process.env.BOT_USERNAME || "blackcarp_bot").replace(/^@/, "");
 const host = process.env.HOST || (fs.existsSync("/.dockerenv") ? "0.0.0.0" : "127.0.0.1");
 const trustProxy = configuredTrustProxy();
+const telegramTransport = String(process.env.TELEGRAM_TRANSPORT || "webhook").trim().toLowerCase();
 const LATEST_SCHEMA_VERSION = 3;
 const bookingJson = express.json({ limit: process.env.JSON_LIMIT || "25mb" });
 const crmJson = express.json({ limit: "32kb" });
@@ -73,16 +74,28 @@ app.post("/api/ops/readiness", requireDeployProbeToken, async (req, res) => {
     db.prepare("SELECT 1 AS ok").get();
     databaseReady = true;
     await telegramRequest("getMe", {});
-    await telegramRequest("setWebhook", {
-      url:`${siteUrl()}/telegram/webhook`,
-      secret_token:process.env.WEBHOOK_SECRET,
-      allowed_updates:["message", "callback_query"],
-      drop_pending_updates:false
-    });
-    const webhook = await telegramRequest("getWebhookInfo", {});
-    if (String(webhook?.result?.url || "") !== `${siteUrl()}/telegram/webhook`) throw new Error("telegram_webhook_mismatch");
+    if (telegramTransport === "webhook") {
+      await telegramRequest("setWebhook", {
+        url:`${siteUrl()}/telegram/webhook`,
+        secret_token:process.env.WEBHOOK_SECRET,
+        allowed_updates:["message", "callback_query"],
+        drop_pending_updates:false
+      });
+      const webhook = await telegramRequest("getWebhookInfo", {});
+      if (String(webhook?.result?.url || "") !== `${siteUrl()}/telegram/webhook`) throw new Error("telegram_webhook_mismatch");
+    } else if (telegramTransport === "polling") {
+      await telegramRequest("deleteWebhook", { drop_pending_updates:false });
+    } else {
+      throw new Error("telegram_transport_invalid");
+    }
     await Promise.all(masterIds().map((chatId) => telegramRequest("sendChatAction", { chat_id:chatId, action:"typing" })));
-    res.json({ ok:true, release:releaseSha(), database:"ready", telegram:"ready", webhook:"ready" });
+    res.json({
+      ok:true,
+      release:releaseSha(),
+      database:"ready",
+      telegram:"ready",
+      ...(telegramTransport === "webhook" ? { webhook:"ready" } : { polling:"ready" })
+    });
   } catch (error) {
     console.error("deploy_readiness_failed", error);
     res.status(503).json({ ok:false, release:releaseSha(), database:databaseReady ? "ready" : "unavailable", telegram:"unavailable", webhook:"unavailable" });
@@ -420,46 +433,14 @@ app.post("/api/crm/outbox/:id/retry", requireCrmAuth, async (req, res) => {
 });
 
 app.post("/telegram/webhook", requireWebhookSecret, webhookJson, async (req, res) => {
-  let telegramUpdateId = null;
   try {
     const update = req.body;
     if (!update || typeof update !== "object" || Array.isArray(update)) {
       return res.status(400).json({ ok: false, error: "invalid_update" });
     }
-    if (typeof update.update_id === "number") {
-      telegramUpdateId = update.update_id;
-      const reserved = db.prepare("INSERT OR IGNORE INTO telegram_updates (id, update_id, event_type, received_at) VALUES (?, ?, 'received', ?)")
-        .run(`upd_${crypto.randomUUID()}`, update.update_id, new Date().toISOString());
-      if (reserved.changes === 0) {
-        const existing = db.prepare("SELECT event_type, received_at FROM telegram_updates WHERE update_id=?").get(update.update_id);
-        if (existing?.event_type === "received") {
-          const leaseAge = Date.now() - new Date(existing.received_at).getTime();
-          if (leaseAge < 5 * 60_000) return res.status(503).json({ ok: false, error: "update_processing" });
-        } else if (existing?.event_type !== "failed") {
-          return res.json({ ok: true, duplicate: true });
-        }
-        db.prepare("UPDATE telegram_updates SET event_type='received', request_id=NULL, received_at=? WHERE update_id=?").run(new Date().toISOString(), update.update_id);
-      }
-    }
-
-    let requestId = null;
-    let eventType = "unknown";
-    if (update.message?.text?.startsWith("/start")) {
-      eventType = "start";
-      requestId = await handleStart(update.message);
-    } else if (update.message?.text) {
-      eventType = "client_message";
-      requestId = await handleClientMessage(update.message);
-    } else if (update.callback_query) {
-      eventType = "callback";
-      requestId = await handleCallback(update.callback_query);
-    }
-
-    if (typeof update.update_id === "number") db.prepare("UPDATE telegram_updates SET request_id=?, event_type=? WHERE update_id=?").run(requestId, eventType, update.update_id);
-
-    res.json({ ok: true });
+    const result = await processTelegramUpdate(update);
+    res.status(result.processing ? 503 : 200).json(result);
   } catch (error) {
-    if (telegramUpdateId !== null) db.prepare("UPDATE telegram_updates SET event_type='failed' WHERE update_id=?").run(telegramUpdateId);
     console.error("telegram_webhook_error", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -528,6 +509,9 @@ if (require.main === module) {
       deliverDueOutbox().catch((error) => console.error("outbox_worker_error", error));
     }, 60_000).unref();
   }
+  if (telegramTransport === "polling") {
+    startTelegramPolling().catch((error) => console.error("telegram_polling_fatal", error));
+  }
   const shutdown = () => {
     server.close(() => {
       db.close();
@@ -540,6 +524,65 @@ if (require.main === module) {
 }
 
 module.exports = { app, db, deliverDueOutbox };
+
+async function processTelegramUpdate(update) {
+  const telegramUpdateId = typeof update.update_id === "number" ? update.update_id : null;
+  try {
+    if (telegramUpdateId !== null) {
+      const reserved = db.prepare("INSERT OR IGNORE INTO telegram_updates (id, update_id, event_type, received_at) VALUES (?, ?, 'received', ?)")
+        .run(`upd_${crypto.randomUUID()}`, telegramUpdateId, new Date().toISOString());
+      if (reserved.changes === 0) {
+        const existing = db.prepare("SELECT event_type, received_at FROM telegram_updates WHERE update_id=?").get(telegramUpdateId);
+        if (existing?.event_type === "received" && Date.now() - new Date(existing.received_at).getTime() < 5 * 60_000) {
+          return { ok:false, error:"update_processing", processing:true };
+        }
+        if (existing?.event_type !== "failed") return { ok:true, duplicate:true };
+        db.prepare("UPDATE telegram_updates SET event_type='received', request_id=NULL, received_at=? WHERE update_id=?").run(new Date().toISOString(), telegramUpdateId);
+      }
+    }
+
+    let requestId = null;
+    let eventType = "unknown";
+    if (update.message?.text?.startsWith("/start")) {
+      eventType = "start";
+      requestId = await handleStart(update.message);
+    } else if (update.message?.text) {
+      eventType = "client_message";
+      requestId = await handleClientMessage(update.message);
+    } else if (update.callback_query) {
+      eventType = "callback";
+      requestId = await handleCallback(update.callback_query);
+    }
+    if (telegramUpdateId !== null) db.prepare("UPDATE telegram_updates SET request_id=?, event_type=? WHERE update_id=?").run(requestId, eventType, telegramUpdateId);
+    return { ok:true };
+  } catch (error) {
+    if (telegramUpdateId !== null) db.prepare("UPDATE telegram_updates SET event_type='failed' WHERE update_id=?").run(telegramUpdateId);
+    throw error;
+  }
+}
+
+async function startTelegramPolling() {
+  if (telegramTransport !== "polling") return;
+  await telegramRequest("deleteWebhook", { drop_pending_updates:false });
+  let offset = Number(db.prepare("SELECT COALESCE(MAX(update_id), -1) AS last_update_id FROM telegram_updates").get().last_update_id) + 1;
+  console.log("Telegram transport: polling");
+  while (true) {
+    try {
+      const response = await telegramRequest("getUpdates", {
+        offset,
+        timeout: 30,
+        allowed_updates:["message", "callback_query"]
+      }, { timeoutMs: 40_000 });
+      for (const update of response.result || []) {
+        const result = await processTelegramUpdate(update);
+        if (!result.processing && typeof update.update_id === "number") offset = update.update_id + 1;
+      }
+    } catch (error) {
+      console.error("telegram_polling_error", error);
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+  }
+}
 
 async function handleStart(message) {
   const publicCode = message.text.split(/\s+/)[1]?.trim();
@@ -993,16 +1036,17 @@ function telegramApiBase() {
   return String(process.env.TELEGRAM_API_BASE || "https://api.telegram.org").replace(/\/$/, "");
 }
 
-async function telegramRequest(method, payload) {
+async function telegramRequest(method, payload, options = {}) {
   const body = JSON.stringify(payload);
   const apiIp = String(process.env.TELEGRAM_API_IP || "").trim();
+  const timeoutMs = Number(options.timeoutMs || process.env.TELEGRAM_TIMEOUT_MS || 15000);
 
   if (apiIp) {
-    return telegramRequestViaIp(method, body, apiIp);
+    return telegramRequestViaIp(method, body, apiIp, timeoutMs);
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Number(process.env.TELEGRAM_TIMEOUT_MS || 15000));
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response;
   try {
     response = await fetch(`${telegramApiBase()}/bot${process.env.BOT_TOKEN}/${method}`, {
@@ -1023,7 +1067,7 @@ async function telegramRequest(method, payload) {
   return data;
 }
 
-function telegramRequestViaIp(method, body, apiIp) {
+function telegramRequestViaIp(method, body, apiIp, timeoutMs = Number(process.env.TELEGRAM_TIMEOUT_MS || 15000)) {
   return new Promise((resolve, reject) => {
     const request = https.request({
       host: apiIp,
@@ -1035,7 +1079,7 @@ function telegramRequestViaIp(method, body, apiIp) {
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(body)
       },
-      timeout: Number(process.env.TELEGRAM_TIMEOUT_MS || 15000)
+      timeout: timeoutMs
     }, (response) => {
       let responseBody = "";
       response.setEncoding("utf8");

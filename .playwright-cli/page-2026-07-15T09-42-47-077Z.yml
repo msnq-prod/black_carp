@@ -1,0 +1,22 @@
+- main [ref=e2]:
+  - generic [ref=e3]:
+    - link "Black Carp" [ref=e4] [cursor=pointer]:
+      - /url: /
+      - text: BLACKCARP
+    - generic [ref=e5]:
+      - generic [ref=e6]: BLACK CARP
+      - strong [ref=e7]: CRM
+    - status
+    - button "Обновить" [ref=e8] [cursor=pointer]
+  - generic [ref=e9]:
+    - complementary "Список заявок" [ref=e10]:
+      - generic [ref=e11]:
+        - paragraph [ref=e12]: ВХОДЯЩИЕ
+        - heading "Заявки" [level=1] [ref=e13]
+      - searchbox "Поиск заявок" [ref=e16]
+      - group "Фильтр статусов" [ref=e17]
+      - region "Заявки" [ref=e18]
+    - region "Карточка заявки" [ref=e19]:
+      - generic [ref=e20]:
+        - paragraph [ref=e21]: BLACK CARP CRM
+        - heading "Выберите заявку." [level=2] [ref=e22]: Выберитезаявку.
