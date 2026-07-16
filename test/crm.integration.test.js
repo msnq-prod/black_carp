@@ -124,34 +124,58 @@ test("complete booking, bot, CRM, attachment and outbox flow", async () => {
   fs.rmSync(path.join(__dirname, "..", "uploads", "booking", created.requestId), { recursive:true, force:true });
 });
 
-test("portfolio drafts stay private and published work is editable from CRM", async () => {
+test("portfolio supports ordered private media and publishes a gallery", async () => {
   const auth = { "X-Test-Master-Id":"100", "Content-Type":"application/json" };
-  const pixel = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL5WQAAAABJRU5ErkJggg==";
+  const pixel = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEElEQVR4nGNgYGD4D8UQBgAd9AP9yOH2qAAAAABJRU5ErkJggg==";
   const createdResponse = await fetch(`${baseUrl}/api/crm/portfolio`, {
     method:"POST", headers:auth,
-    body:JSON.stringify({ title:"Black Wave", caption:"Спина", altText:"Графическая татуировка", bodyZone:"Спина", style:"Графика", year:2026, imageDataUrl:pixel })
+    body:JSON.stringify({ title:"Black Wave", caption:"Спина", bodyZone:"Спина", style:"Графика", year:2026 })
   });
   assert.equal(createdResponse.status, 201);
-  const created = (await createdResponse.json()).item;
+  let created = (await createdResponse.json()).item;
   assert.equal(created.status, "draft");
+  assert.equal(created.media.length, 0);
   assert.equal((await (await fetch(`${baseUrl}/api/portfolio`)).json()).items.length, 0);
-  assert.equal((await fetch(`${baseUrl}${created.imageUrl}`)).status, 401);
-  assert.equal((await fetch(`${baseUrl}${created.imageUrl}`, { headers:{ "X-Test-Master-Id":"100" } })).status, 200);
+
+  const firstUpload = await fetch(`${baseUrl}/api/crm/portfolio/${created.id}/media`, { method:"POST", headers:auth, body:JSON.stringify({ imageDataUrl:pixel, altText:"Первый ракурс татуировки" }) });
+  assert.equal(firstUpload.status, 201);
+  const first = (await firstUpload.json()).media;
+  const secondUpload = await fetch(`${baseUrl}/api/crm/portfolio/${created.id}/media`, { method:"POST", headers:auth, body:JSON.stringify({ imageDataUrl:pixel, altText:"" }) });
+  assert.equal(secondUpload.status, 201);
+  const second = (await secondUpload.json()).media;
+  assert.equal((await fetch(`${baseUrl}${first.imageUrl}`)).status, 401);
+  const privateImage = await fetch(`${baseUrl}${first.thumbUrl}`, { headers:{ "X-Test-Master-Id":"100" } });
+  assert.equal(privateImage.status, 200);
+  assert.equal(privateImage.headers.get("content-type"), "image/webp");
+
+  const incompletePublish = await fetch(`${baseUrl}/api/crm/portfolio/${created.id}/publish`, { method:"POST", headers:{ "X-Test-Master-Id":"100" } });
+  assert.equal(incompletePublish.status, 409);
+  const altUpdate = await fetch(`${baseUrl}/api/crm/portfolio/${created.id}/media/${second.id}`, { method:"PATCH", headers:auth, body:JSON.stringify({ altText:"Второй ракурс татуировки" }) });
+  assert.equal(altUpdate.status, 200);
+  const reordered = await fetch(`${baseUrl}/api/crm/portfolio/${created.id}/media/reorder`, { method:"POST", headers:auth, body:JSON.stringify({ ids:[second.id, first.id] }) });
+  assert.equal(reordered.status, 200);
 
   const published = await fetch(`${baseUrl}/api/crm/portfolio/${created.id}/publish`, { method:"POST", headers:{ "X-Test-Master-Id":"100" } });
   assert.equal(published.status, 200);
   const publicItems = (await (await fetch(`${baseUrl}/api/portfolio`)).json()).items;
   assert.equal(publicItems.length, 1);
   assert.equal(publicItems[0].title, "Black Wave");
+  assert.equal(publicItems[0].media.length, 2);
+  assert.equal(publicItems[0].media[0].id, second.id);
+  assert.equal(publicItems[0].imageUrl, publicItems[0].media[0].imageUrl);
   assert.equal((await fetch(`${baseUrl}${publicItems[0].imageUrl}`)).status, 200);
 
   const updated = await fetch(`${baseUrl}/api/crm/portfolio/${created.id}`, { method:"PATCH", headers:auth, body:JSON.stringify({ caption:"Обновлено" }) });
   assert.equal(updated.status, 200);
   assert.equal((await updated.json()).item.caption, "Обновлено");
+  const removed = await fetch(`${baseUrl}/api/crm/portfolio/${created.id}/media/${first.id}`, { method:"DELETE", headers:{ "X-Test-Master-Id":"100" } });
+  assert.equal(removed.status, 200);
+  assert.equal((await removed.json()).item.media.length, 1);
   const archived = await fetch(`${baseUrl}/api/crm/portfolio/${created.id}/archive`, { method:"POST", headers:{ "X-Test-Master-Id":"100" } });
   assert.equal(archived.status, 200);
   assert.equal((await (await fetch(`${baseUrl}/api/portfolio`)).json()).items.length, 0);
-  fs.rmSync(path.join(__dirname, "..", "uploads", "portfolio", `${created.id}.png`), { force:true });
+  const files = db.prepare("SELECT original_path, display_path, thumb_path FROM portfolio_media WHERE portfolio_item_id=?").all(created.id);
+  for (const file of files.flatMap((row) => [row.original_path, row.display_path, row.thumb_path])) fs.rmSync(path.join(__dirname, "..", file), { force:true });
 });
 
 test("Telegram start cannot rebind a booking to another user", async () => {
@@ -382,9 +406,10 @@ test("trusted proxy IPs get separate rate buckets and limiting runs before JSON 
   assert.equal((await otherProxyClient.json()).error, "invalid_json");
 });
 
-test("migration upgrades v1 outbox and rejects a newer database version", () => {
+test("migration upgrades v1, backfills v3 portfolio media and rejects a newer database version", () => {
   const root = path.join(__dirname, "..");
   const v1Path = path.join(os.tmpdir(), `black-carp-v1-${process.pid}.sqlite`);
+  const v3Path = path.join(os.tmpdir(), `black-carp-v3-${process.pid}.sqlite`);
   const futurePath = path.join(os.tmpdir(), `black-carp-future-${process.pid}.sqlite`);
   try {
     const v1 = new DatabaseSync(v1Path);
@@ -405,11 +430,38 @@ test("migration upgrades v1 outbox and rejects a newer database version", () => 
     });
     assert.equal(upgraded.status, 0, upgraded.stderr);
     const migrated = new DatabaseSync(v1Path);
-    assert.equal(migrated.prepare("PRAGMA user_version").get().user_version, 3);
+    assert.equal(migrated.prepare("PRAGMA user_version").get().user_version, 4);
     const columns = new Set(migrated.prepare("PRAGMA table_info(notification_outbox)").all().map((row) => row.name));
     assert.deepEqual(["payload_json", "claim_token", "claimed_at"].every((name) => columns.has(name)), true);
     assert.equal(Boolean(migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='portfolio_items'").get()), true);
+    assert.equal(Boolean(migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='portfolio_media'").get()), true);
     migrated.close();
+
+    const v3 = new DatabaseSync(v3Path);
+    v3.exec(`
+      CREATE TABLE portfolio_items (
+        id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, title TEXT NOT NULL, caption TEXT, alt_text TEXT NOT NULL DEFAULT '', body_zone TEXT, style TEXT, year INTEGER,
+        status TEXT NOT NULL DEFAULT 'draft', sort_order INTEGER NOT NULL DEFAULT 0, image_path TEXT, mime_type TEXT, published_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE notification_outbox (
+        id TEXT PRIMARY KEY, request_id TEXT NOT NULL, kind TEXT NOT NULL, recipient_chat_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL,
+        last_error TEXT, sent_at TEXT, payload_json TEXT, claim_token TEXT, claimed_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO portfolio_items (id,slug,title,alt_text,image_path,mime_type) VALUES ('legacy','legacy','Legacy','Старый кадр','uploads/portfolio/legacy.png','image/png');
+      PRAGMA user_version = 3;
+    `);
+    v3.close();
+    const v3Upgraded = spawnSync(process.execPath, ["-e", "require('./server')"], { cwd:root, env:{ ...process.env, NODE_ENV:"test", DB_PATH:v3Path }, encoding:"utf8" });
+    assert.equal(v3Upgraded.status, 0, v3Upgraded.stderr);
+    const backfilled = new DatabaseSync(v3Path);
+    assert.equal(backfilled.prepare("PRAGMA user_version").get().user_version, 4);
+    const legacyMedia = backfilled.prepare("SELECT * FROM portfolio_media WHERE portfolio_item_id='legacy'").get();
+    assert.equal(legacyMedia.display_path, "uploads/portfolio/legacy.png");
+    assert.equal(legacyMedia.alt_text, "Старый кадр");
+    backfilled.close();
 
     const future = new DatabaseSync(futurePath);
     future.exec("PRAGMA user_version = 99");
@@ -426,7 +478,7 @@ test("migration upgrades v1 outbox and rejects a newer database version", () => 
     assert.equal(unchanged.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table'").get().count, 0);
     unchanged.close();
   } finally {
-    for (const base of [v1Path, futurePath]) {
+    for (const base of [v1Path, v3Path, futurePath]) {
       for (const file of [base, `${base}-wal`, `${base}-shm`]) fs.rmSync(file, { force:true });
     }
   }

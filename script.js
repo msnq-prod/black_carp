@@ -4,6 +4,8 @@ const openButtons = [...document.querySelectorAll("[data-open-view]")];
 const app = document.querySelector("#app");
 const worksFeed = document.querySelector("#worksFeed");
 const worksTopButton = document.querySelector("#worksTopButton");
+const portfolioLightbox = document.querySelector("#portfolioLightbox");
+const portfolioLightboxStage = document.querySelector("#portfolioLightboxStage");
 const routeModal = document.querySelector("[data-route-modal]");
 const routeOpenButtons = [...document.querySelectorAll("[data-open-route-gallery]")];
 const routeCloseButtons = [...document.querySelectorAll("[data-route-close]")];
@@ -25,64 +27,27 @@ const viewTitles = {
   profile: "Профиль — Black Carp"
 };
 
-const works = [
-  {
-    title: "Nocturne I",
-    meta: "forearm / graphic / 2026",
-    image: "assets/media/work-hero-01.jpg",
-    alt: "Графическая татуировка на предплечье"
-  },
-  {
-    title: "Arc Study",
-    meta: "back / graphic / 2026",
-    image: "assets/media/work-hero-02.jpg",
-    alt: "Графическая татуировка на спине"
-  },
-  {
-    title: "Quiet Line",
-    meta: "arm detail / fine line / 2026",
-    image: "assets/media/work-hero-03.jpg",
-    alt: "Макро-фрагмент графической татуировки"
-  },
-  {
-    title: "Paper Trace",
-    meta: "sketch / process / 2026",
-    image: "assets/media/sketch-process.png",
-    alt: "Эскиз графической татуировки на бумаге"
-  },
-  {
-    title: "Axis",
-    meta: "forearm / graphic / 2025",
-    image: "assets/media/work-hero-01.jpg",
-    alt: "Графическая татуировка на предплечье"
-  },
-  {
-    title: "Shoulder Field",
-    meta: "shoulder / graphic / 2025",
-    image: "assets/media/work-hero-02.jpg",
-    alt: "Графическая татуировка на плече"
-  },
-  {
-    title: "Skin Map",
-    meta: "detail / dotwork / 2026",
-    image: "assets/media/work-hero-03.jpg",
-    alt: "Деталь татуировки на коже"
-  },
-  {
-    title: "Draft 04",
-    meta: "paper / composition / 2026",
-    image: "assets/media/sketch-process.png",
-    alt: "Процесс работы с эскизом"
-  }
-];
+let publishedWorks = [];
+let lightboxState = { workIndex:0, frameIndex:0, returnFocus:null };
 
 function renderWorks(items) {
+  publishedWorks = items;
+  worksTopButton.hidden = items.length < 2;
+  if (!items.length) {
+    worksFeed.innerHTML = '<div class="works-state works-state--empty"><p class="eyebrow">ПОРТФОЛИО</p><h2>Новые работы<br>скоро появятся.</h2><p>Здесь будут опубликованы проекты мастера.</p></div>';
+    return;
+  }
   worksFeed.innerHTML = items
     .map(
       (work, index) => `
-      <article class="work-slide">
-        <img src="${escapeHtml(work.image)}" alt="${escapeHtml(work.alt)}" loading="${index === 0 ? "eager" : "lazy"}" />
-        <div class="slide-index">${String(index + 1).padStart(2, "0")} / ${String(items.length).padStart(2, "0")}</div>
+      <article class="work-slide" data-work-index="${index}">
+        <div class="work-gallery" aria-label="Фотографии работы ${escapeHtml(work.title)}">
+          <div class="work-gallery__track" data-gallery-track="${index}">
+            ${work.media.map((media, mediaIndex) => `<figure class="work-frame"><button type="button" data-open-lightbox="${index}" data-frame-index="${mediaIndex}" aria-label="Открыть кадр ${mediaIndex + 1} из ${work.media.length}"><img src="${escapeHtml(media.imageUrl)}" alt="${escapeHtml(media.altText)}" loading="${index === 0 && mediaIndex === 0 ? "eager" : "lazy"}"></button></figure>`).join("")}
+          </div>
+          ${work.media.length > 1 ? `<div class="work-gallery__controls"><button type="button" data-gallery-step="-1" data-work-index="${index}" aria-label="Предыдущий кадр">‹</button><span data-gallery-counter="${index}">1 / ${work.media.length}</span><button type="button" data-gallery-step="1" data-work-index="${index}" aria-label="Следующий кадр">›</button></div>` : ""}
+        </div>
+        <div class="slide-index">РАБОТА ${String(index + 1).padStart(2, "0")} / ${String(items.length).padStart(2, "0")}</div>
         <div class="slide-caption">
           <h2>${escapeHtml(work.title)}</h2>
           <p>${escapeHtml(work.meta)}</p>
@@ -93,20 +58,23 @@ function renderWorks(items) {
     .join("");
 }
 
-renderWorks(works);
+function renderWorksError() {
+  publishedWorks = [];
+  worksTopButton.hidden = true;
+  worksFeed.innerHTML = '<div class="works-state works-state--error" role="alert"><p class="eyebrow">ПОРТФОЛИО</p><h2>Не удалось<br>загрузить работы.</h2><button type="button" data-retry-portfolio>Повторить</button></div>';
+}
 
 async function loadPublishedWorks() {
   try {
     const response = await fetch(`${bookingApiBase}/api/portfolio`, { headers:{ "Accept":"application/json" } });
     const data = await response.json();
-    if (!response.ok || !data.ok || !Array.isArray(data.items) || !data.items.length) return;
+    if (!response.ok || !data.ok || !Array.isArray(data.items)) throw new Error("portfolio_unavailable");
     renderWorks(data.items.map((item) => ({
       title:item.title,
       meta:[item.bodyZone, item.style, item.year].filter(Boolean).join(" / ") || item.caption || "Black Carp",
-      image:item.imageUrl,
-      alt:item.altText
-    })));
-  } catch {}
+      media:(Array.isArray(item.media) && item.media.length ? item.media : (item.imageUrl ? [{ imageUrl:item.imageUrl, altText:item.altText || "" }] : []))
+    })).filter((item) => item.media.length));
+  } catch { renderWorksError(); }
 }
 
 loadPublishedWorks();
@@ -130,6 +98,8 @@ function setView(name) {
 
   if (name === "works") {
     worksFeed.scrollTo({ top: 0, behavior: "auto" });
+    app.scrollTo({ top: 0, behavior: "auto" });
+    window.scrollTo({ top: 0, behavior: "auto" });
   } else {
     app.scrollTo({ top: 0, behavior: "auto" });
     window.scrollTo({ top: 0, behavior: "auto" });
@@ -186,6 +156,91 @@ if (worksTopButton && worksFeed) {
   });
 }
 
+function inlineGalleryIndex(track) {
+  return Math.max(0, Math.min(track.children.length - 1, Math.round(track.scrollLeft / Math.max(1, track.clientWidth))));
+}
+
+function stepInlineGallery(workIndex, delta) {
+  const track = worksFeed.querySelector(`[data-gallery-track="${workIndex}"]`);
+  if (!track) return;
+  const next = Math.max(0, Math.min(track.children.length - 1, inlineGalleryIndex(track) + delta));
+  track.scrollTo({ left:next * track.clientWidth, behavior:"smooth" });
+}
+
+worksFeed.addEventListener("click", (event) => {
+  const retry = event.target.closest("[data-retry-portfolio]");
+  if (retry) { worksFeed.innerHTML = '<div class="works-state" role="status"><span class="works-loader" aria-hidden="true"></span><p>Загружаем работы…</p></div>'; loadPublishedWorks(); return; }
+  const step = event.target.closest("[data-gallery-step]");
+  if (step) { stepInlineGallery(Number(step.dataset.workIndex), Number(step.dataset.galleryStep)); return; }
+  const open = event.target.closest("[data-open-lightbox]");
+  if (open) openPortfolioLightbox(Number(open.dataset.openLightbox), Number(open.dataset.frameIndex), open);
+});
+
+let galleryScrollFrame = 0;
+worksFeed.addEventListener("scroll", (event) => {
+  const track = event.target.closest?.("[data-gallery-track]");
+  if (!track) return;
+  cancelAnimationFrame(galleryScrollFrame);
+  galleryScrollFrame = requestAnimationFrame(() => {
+    const counter = worksFeed.querySelector(`[data-gallery-counter="${track.dataset.galleryTrack}"]`);
+    if (counter) counter.textContent = `${inlineGalleryIndex(track) + 1} / ${track.children.length}`;
+  });
+}, true);
+
+function openPortfolioLightbox(workIndex, frameIndex, trigger) {
+  const work = publishedWorks[workIndex];
+  if (!portfolioLightbox || !work) return;
+  lightboxState = { workIndex, frameIndex, returnFocus:trigger };
+  document.querySelector("#portfolioLightboxTitle").textContent = work.title;
+  portfolioLightboxStage.innerHTML = `<div class="portfolio-lightbox__track">${work.media.map((media) => `<figure><img src="${escapeHtml(media.imageUrl)}" alt="${escapeHtml(media.altText)}"></figure>`).join("")}</div>`;
+  portfolioLightbox.hidden = false;
+  portfolioLightbox.setAttribute("aria-hidden", "false");
+  document.body.classList.add("portfolio-lightbox-open");
+  requestAnimationFrame(() => {
+    const track = portfolioLightboxStage.querySelector(".portfolio-lightbox__track");
+    track.scrollTo({ left:frameIndex * track.clientWidth, behavior:"auto" });
+    updateLightboxControls();
+    portfolioLightbox.querySelector("[data-lightbox-close]")?.focus();
+  });
+}
+
+function closePortfolioLightbox() {
+  if (!portfolioLightbox || portfolioLightbox.hidden) return;
+  portfolioLightbox.hidden = true;
+  portfolioLightbox.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("portfolio-lightbox-open");
+  lightboxState.returnFocus?.focus?.({ preventScroll:true });
+  lightboxState.returnFocus = null;
+}
+
+function updateLightboxControls() {
+  const work = publishedWorks[lightboxState.workIndex];
+  const track = portfolioLightboxStage?.querySelector(".portfolio-lightbox__track");
+  if (!work || !track) return;
+  lightboxState.frameIndex = inlineGalleryIndex(track);
+  document.querySelector("#portfolioLightboxCounter").textContent = `${lightboxState.frameIndex + 1} / ${work.media.length}`;
+  const previous = portfolioLightbox.querySelector('[data-lightbox-step="-1"]');
+  const next = portfolioLightbox.querySelector('[data-lightbox-step="1"]');
+  previous.disabled = lightboxState.frameIndex === 0;
+  next.disabled = lightboxState.frameIndex === work.media.length - 1;
+}
+
+function stepPortfolioLightbox(delta) {
+  const work = publishedWorks[lightboxState.workIndex];
+  const track = portfolioLightboxStage?.querySelector(".portfolio-lightbox__track");
+  if (!work || !track) return;
+  const next = Math.max(0, Math.min(work.media.length - 1, lightboxState.frameIndex + delta));
+  track.scrollTo({ left:next * track.clientWidth, behavior:"smooth" });
+}
+
+portfolioLightbox?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-lightbox-close]")) { closePortfolioLightbox(); return; }
+  const step = event.target.closest("[data-lightbox-step]");
+  if (step) stepPortfolioLightbox(Number(step.dataset.lightboxStep));
+});
+
+portfolioLightboxStage?.addEventListener("scroll", () => requestAnimationFrame(updateLightboxControls), true);
+
 let routeModalReturnFocus = null;
 
 function openRouteModal(trigger) {
@@ -215,6 +270,20 @@ routeCloseButtons.forEach((button) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (portfolioLightbox && !portfolioLightbox.hidden) {
+    if (event.key === "Escape") { closePortfolioLightbox(); return; }
+    if (event.key === "ArrowLeft") { stepPortfolioLightbox(-1); return; }
+    if (event.key === "ArrowRight") { stepPortfolioLightbox(1); return; }
+    if (event.key === "Tab") {
+      const focusable = [...portfolioLightbox.querySelectorAll("button:not(:disabled)")];
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+    return;
+  }
   if (event.key === "Escape" && routeModal && !routeModal.hidden) {
     closeRouteModal();
     return;

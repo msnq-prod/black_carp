@@ -4,6 +4,7 @@ const path = require("path");
 const crypto = require("crypto");
 const https = require("https");
 const { DatabaseSync } = require("node:sqlite");
+const sharp = require("sharp");
 
 const rootDir = __dirname;
 loadEnvFile(path.join(rootDir, ".env"));
@@ -12,13 +13,16 @@ const buildRevision = readBuildRevision();
 const dataDir = path.join(rootDir, "data");
 const uploadsDir = path.join(rootDir, "uploads", "booking");
 const portfolioUploadsDir = path.join(rootDir, "uploads", "portfolio");
+const portfolioOriginalsDir = path.join(portfolioUploadsDir, "original");
+const portfolioPublicDir = path.join(portfolioUploadsDir, "public");
+const portfolioThumbsDir = path.join(portfolioUploadsDir, "thumb");
 const dbPath = process.env.DB_PATH || path.join(dataDir, "black-carp.sqlite");
 const port = Number(process.env.PORT || 3001);
 const botUsername = (process.env.BOT_USERNAME || "blackcarp_bot").replace(/^@/, "");
 const host = process.env.HOST || (fs.existsSync("/.dockerenv") ? "0.0.0.0" : "127.0.0.1");
 const trustProxy = configuredTrustProxy();
 const telegramTransport = String(process.env.TELEGRAM_TRANSPORT || "webhook").trim().toLowerCase();
-const LATEST_SCHEMA_VERSION = 3;
+const LATEST_SCHEMA_VERSION = 4;
 const bookingJson = express.json({ limit: process.env.JSON_LIMIT || "25mb" });
 const crmJson = express.json({ limit: "32kb" });
 const portfolioJson = express.json({ limit: "12mb" });
@@ -38,6 +42,9 @@ const bookingRateBuckets = new Map();
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(uploadsDir, { recursive: true });
 fs.mkdirSync(portfolioUploadsDir, { recursive: true });
+fs.mkdirSync(portfolioOriginalsDir, { recursive: true });
+fs.mkdirSync(portfolioPublicDir, { recursive: true });
+fs.mkdirSync(portfolioThumbsDir, { recursive: true });
 
 const databaseExisted = fs.existsSync(dbPath);
 const db = new DatabaseSync(dbPath);
@@ -334,21 +341,24 @@ app.get("/api/crm/portfolio", requireCrmAuth, (req, res) => {
   res.json({ ok:true, items:rows.map((row) => portfolioItem(row, true)), counts });
 });
 
-app.post("/api/crm/portfolio", requireCrmAuth, portfolioJson, (req, res) => {
+app.post("/api/crm/portfolio", requireCrmAuth, portfolioJson, async (req, res) => {
+  let createdId = null;
   try {
     const now = new Date().toISOString();
     const id = `work_${crypto.randomUUID()}`;
+    createdId = id;
     const input = validatePortfolioInput(req.body, { partial:false });
     if (input.error) return res.status(400).json({ ok:false, error:input.error });
-    const image = req.body?.imageDataUrl ? savePortfolioImage(id, req.body.imageDataUrl) : null;
     const sortOrder = Number(db.prepare("SELECT COALESCE(MAX(sort_order), -1) + 1 AS value FROM portfolio_items").get().value);
     const slug = uniquePortfolioSlug(input.value.title || "work");
     db.prepare(`INSERT INTO portfolio_items (id, slug, title, caption, alt_text, body_zone, style, year, status, sort_order, image_path, mime_type, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`)
-      .run(id, slug, input.value.title, input.value.caption, input.value.altText, input.value.bodyZone, input.value.style, input.value.year, sortOrder, image?.filePath || null, image?.mimeType || null, now, now);
+      .run(id, slug, input.value.title, input.value.caption, input.value.altText, input.value.bodyZone, input.value.style, input.value.year, sortOrder, null, null, now, now);
+    if (req.body?.imageDataUrl) await createPortfolioMedia(id, req.body.imageDataUrl, input.value.altText || "");
     appendPortfolioActivity(id, req.master.telegramId, "created", null);
     res.status(201).json({ ok:true, item:portfolioItem(db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(id), true) });
   } catch (error) {
+    if (createdId) db.prepare("DELETE FROM portfolio_items WHERE id=?").run(createdId);
     if (error?.code === "invalid_portfolio_image") return res.status(400).json({ ok:false, error:error.code });
     console.error("portfolio_create_error", error);
     res.status(500).json({ ok:false, error:"internal_error" });
@@ -361,27 +371,93 @@ app.get("/api/crm/portfolio/:id", requireCrmAuth, (req, res) => {
   res.json({ ok:true, item:portfolioItem(row, true) });
 });
 
-app.get("/api/crm/portfolio/:id/image", requireCrmAuth, (req, res) => {
-  const row = db.prepare("SELECT image_path, mime_type FROM portfolio_items WHERE id=?").get(req.params.id);
-  const file = row?.image_path ? absolutePortfolioPath(row.image_path) : null;
+app.get("/api/crm/portfolio/:id/media/:mediaId", requireCrmAuth, (req, res) => {
+  const row = db.prepare("SELECT * FROM portfolio_media WHERE id=? AND portfolio_item_id=?").get(req.params.mediaId, req.params.id);
+  const relativePath = req.query.variant === "thumb" ? row?.thumb_path : row?.display_path;
+  const file = relativePath ? absoluteManagedPath(relativePath) : null;
   if (!file || !fs.existsSync(file)) return res.status(404).end();
   res.setHeader("Content-Type", row.mime_type);
   res.setHeader("Cache-Control", "private, no-store");
   fs.createReadStream(file).pipe(res);
 });
 
-app.patch("/api/crm/portfolio/:id", requireCrmAuth, portfolioJson, (req, res) => {
+app.post("/api/crm/portfolio/:id/media", requireCrmAuth, portfolioJson, async (req, res) => {
+  try {
+    const item = db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(req.params.id);
+    if (!item) return res.status(404).json({ ok:false, error:"not_found" });
+    if (item.status === "archived") return res.status(409).json({ ok:false, error:"archived_item" });
+    const altText = normalizeShortText(req.body?.altText, 200);
+    const media = await createPortfolioMedia(item.id, req.body?.imageDataUrl, altText);
+    appendPortfolioActivity(item.id, req.master.telegramId, "media_added", { mediaId:media.id });
+    res.status(201).json({ ok:true, media:portfolioMedia(media, true), item:portfolioItem(db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(item.id), true) });
+  } catch (error) {
+    if (["invalid_portfolio_image", "portfolio_media_limit"].includes(error?.code)) return res.status(error.code === "portfolio_media_limit" ? 409 : 400).json({ ok:false, error:error.code });
+    console.error("portfolio_media_create_error", error);
+    res.status(500).json({ ok:false, error:"internal_error" });
+  }
+});
+
+app.patch("/api/crm/portfolio/:id/media/:mediaId", requireCrmAuth, crmJson, (req, res) => {
+  const item = db.prepare("SELECT status FROM portfolio_items WHERE id=?").get(req.params.id);
+  if (!item) return res.status(404).json({ ok:false, error:"not_found" });
+  if (item.status === "archived") return res.status(409).json({ ok:false, error:"archived_item" });
+  const media = db.prepare("SELECT * FROM portfolio_media WHERE id=? AND portfolio_item_id=?").get(req.params.mediaId, req.params.id);
+  if (!media) return res.status(404).json({ ok:false, error:"not_found" });
+  const altText = normalizeShortText(req.body?.altText, 200);
+  const now = new Date().toISOString();
+  db.prepare("UPDATE portfolio_media SET alt_text=?, updated_at=? WHERE id=?").run(altText, now, media.id);
+  touchPortfolioItem(req.params.id, now);
+  appendPortfolioActivity(req.params.id, req.master.telegramId, "media_updated", { mediaId:media.id });
+  res.json({ ok:true, item:portfolioItem(db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(req.params.id), true) });
+});
+
+app.delete("/api/crm/portfolio/:id/media/:mediaId", requireCrmAuth, (req, res) => {
+  const item = db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(req.params.id);
+  if (!item) return res.status(404).json({ ok:false, error:"not_found" });
+  if (item.status === "archived") return res.status(409).json({ ok:false, error:"archived_item" });
+  const rows = portfolioMediaRows(item.id);
+  const media = rows.find((row) => row.id === req.params.mediaId);
+  if (!media) return res.status(404).json({ ok:false, error:"not_found" });
+  if (item.status === "published" && rows.length === 1) return res.status(409).json({ ok:false, error:"published_media_required" });
+  const remaining = rows.filter((row) => row.id !== media.id);
+  const now = new Date().toISOString();
+  withTransaction(() => {
+    db.prepare("DELETE FROM portfolio_media WHERE id=?").run(media.id);
+    remaining.forEach((row, index) => db.prepare("UPDATE portfolio_media SET sort_order=?, updated_at=? WHERE id=?").run(index, now, row.id));
+    touchPortfolioItem(item.id, now);
+  });
+  removePortfolioMediaFiles(media);
+  appendPortfolioActivity(item.id, req.master.telegramId, "media_removed", { mediaId:media.id });
+  res.json({ ok:true, item:portfolioItem(db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(item.id), true) });
+});
+
+app.post("/api/crm/portfolio/:id/media/reorder", requireCrmAuth, crmJson, (req, res) => {
+  const item = db.prepare("SELECT status FROM portfolio_items WHERE id=?").get(req.params.id);
+  if (!item) return res.status(404).json({ ok:false, error:"not_found" });
+  if (item.status === "archived") return res.status(409).json({ ok:false, error:"archived_item" });
+  const ids = req.body?.ids;
+  const existing = portfolioMediaRows(req.params.id).map((row) => row.id);
+  if (!Array.isArray(ids) || ids.length !== existing.length || new Set(ids).size !== ids.length || existing.some((id) => !ids.includes(id))) return res.status(409).json({ ok:false, error:"media_order_conflict" });
+  const now = new Date().toISOString();
+  withTransaction(() => {
+    ids.forEach((id, index) => db.prepare("UPDATE portfolio_media SET sort_order=?, updated_at=? WHERE id=? AND portfolio_item_id=?").run(index, now, id, req.params.id));
+    touchPortfolioItem(req.params.id, now);
+  });
+  appendPortfolioActivity(req.params.id, req.master.telegramId, "media_reordered", { ids });
+  res.json({ ok:true, item:portfolioItem(db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(req.params.id), true) });
+});
+
+app.patch("/api/crm/portfolio/:id", requireCrmAuth, portfolioJson, async (req, res) => {
   try {
     const row = db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(req.params.id);
     if (!row) return res.status(404).json({ ok:false, error:"not_found" });
     if (row.status === "archived") return res.status(409).json({ ok:false, error:"archived_item" });
     const input = validatePortfolioInput(req.body, { partial:true, current:row });
     if (input.error) return res.status(400).json({ ok:false, error:input.error });
-    let image = null;
-    if (req.body?.imageDataUrl) image = savePortfolioImage(row.id, req.body.imageDataUrl);
     const now = new Date().toISOString();
     db.prepare(`UPDATE portfolio_items SET title=?, caption=?, alt_text=?, body_zone=?, style=?, year=?, image_path=?, mime_type=?, updated_at=? WHERE id=?`)
-      .run(input.value.title, input.value.caption, input.value.altText, input.value.bodyZone, input.value.style, input.value.year, image?.filePath || row.image_path, image?.mimeType || row.mime_type, now, row.id);
+      .run(input.value.title, input.value.caption, input.value.altText, input.value.bodyZone, input.value.style, input.value.year, row.image_path, row.mime_type, now, row.id);
+    if (req.body?.imageDataUrl) await createPortfolioMedia(row.id, req.body.imageDataUrl, input.value.altText || "");
     appendPortfolioActivity(row.id, req.master.telegramId, "updated", null);
     res.json({ ok:true, item:portfolioItem(db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(row.id), true) });
   } catch (error) {
@@ -395,7 +471,8 @@ for (const [action, nextStatus] of [["publish", "published"], ["unpublish", "dra
   app.post(`/api/crm/portfolio/:id/${action}`, requireCrmAuth, (req, res) => {
     const row = db.prepare("SELECT * FROM portfolio_items WHERE id=?").get(req.params.id);
     if (!row) return res.status(404).json({ ok:false, error:"not_found" });
-    if (action === "publish" && (!row.title || !row.alt_text || !row.image_path)) return res.status(409).json({ ok:false, error:"item_incomplete" });
+    const media = portfolioMediaRows(row.id);
+    if (action === "publish" && (!row.title || !media.length || media.some((entry) => !String(entry.alt_text || "").trim()))) return res.status(409).json({ ok:false, error:"item_incomplete" });
     const now = new Date().toISOString();
     db.prepare("UPDATE portfolio_items SET status=?, published_at=?, updated_at=? WHERE id=?")
       .run(nextStatus, nextStatus === "published" ? (row.published_at || now) : null, now, row.id);
@@ -467,13 +544,24 @@ app.get("/api/booking/status/:publicCode", (req, res) => {
   });
 });
 
+app.get("/uploads/portfolio/public/:filename", (req, res) => {
+  const filename = path.basename(String(req.params.filename || ""));
+  const relativePath = `uploads/portfolio/public/${filename}`;
+  const media = db.prepare("SELECT m.mime_type FROM portfolio_media m JOIN portfolio_items i ON i.id=m.portfolio_item_id WHERE m.display_path=? AND i.status='published'").get(relativePath);
+  const absolutePath = path.join(portfolioPublicDir, filename);
+  if (!media || !fs.existsSync(absolutePath)) return res.status(404).end();
+  res.setHeader("Content-Type", media.mime_type);
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  fs.createReadStream(absolutePath).pipe(res);
+});
+
 app.get("/uploads/portfolio/:filename", (req, res) => {
   const filename = path.basename(String(req.params.filename || ""));
   const relativePath = `uploads/portfolio/${filename}`;
-  const item = db.prepare("SELECT mime_type FROM portfolio_items WHERE image_path=? AND status='published'").get(relativePath);
+  const media = db.prepare("SELECT m.mime_type FROM portfolio_media m JOIN portfolio_items i ON i.id=m.portfolio_item_id WHERE m.display_path=? AND i.status='published'").get(relativePath);
   const absolutePath = path.join(portfolioUploadsDir, filename);
-  if (!item || !fs.existsSync(absolutePath)) return res.status(404).end();
-  res.setHeader("Content-Type", item.mime_type);
+  if (!media || !fs.existsSync(absolutePath)) return res.status(404).end();
+  res.setHeader("Content-Type", media.mime_type);
   res.setHeader("Cache-Control", "public, max-age=86400");
   fs.createReadStream(absolutePath).pipe(res);
 });
@@ -1218,7 +1306,7 @@ function cors(req, res, next) {
     .filter(Boolean);
   const origin = req.get("origin");
   if (origin && (allowed.includes(origin) || (allowed.length === 0 && process.env.NODE_ENV !== "production"))) res.setHeader("Access-Control-Allow-Origin", origin);
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Telegram-Bot-Api-Secret-Token,X-Telegram-Init-Data,X-Test-Master-Id");
   res.setHeader("Vary", "Origin");
   if (req.method === "OPTIONS") return res.sendStatus(204);
@@ -1291,6 +1379,7 @@ function runMigrations(database) {
     if (currentVersion < 1) migrateToVersion1(database);
     if (currentVersion < 2) migrateToVersion2(database);
     if (currentVersion < 3) migrateToVersion3(database);
+    if (currentVersion < 4) migrateToVersion4(database);
     database.exec(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}; COMMIT`);
   } catch (error) {
     try { database.exec("ROLLBACK"); } catch {}
@@ -1414,6 +1503,32 @@ function migrateToVersion3(database) {
     CREATE INDEX IF NOT EXISTS idx_portfolio_items_status_order ON portfolio_items(status, sort_order);
     CREATE INDEX IF NOT EXISTS idx_portfolio_activity_item ON portfolio_activity(portfolio_item_id, created_at);
   `);
+}
+
+function migrateToVersion4(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS portfolio_media (
+      id TEXT PRIMARY KEY,
+      portfolio_item_id TEXT NOT NULL REFERENCES portfolio_items(id) ON DELETE CASCADE,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      original_path TEXT NOT NULL,
+      display_path TEXT NOT NULL,
+      thumb_path TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      alt_text TEXT NOT NULL DEFAULT '',
+      width INTEGER,
+      height INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_portfolio_media_item_order ON portfolio_media(portfolio_item_id, sort_order);
+  `);
+  const legacy = database.prepare("SELECT id, image_path, mime_type, alt_text, created_at, updated_at FROM portfolio_items WHERE image_path IS NOT NULL AND NOT EXISTS (SELECT 1 FROM portfolio_media WHERE portfolio_item_id=portfolio_items.id)").all();
+  const insert = database.prepare("INSERT INTO portfolio_media (id, portfolio_item_id, sort_order, original_path, display_path, thumb_path, mime_type, alt_text, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?)");
+  for (const row of legacy) {
+    const id = `media_${crypto.randomUUID()}`;
+    insert.run(id, row.id, row.image_path, row.image_path, row.image_path, row.mime_type || "image/jpeg", row.alt_text || "", row.created_at, row.updated_at);
+  }
 }
 
 function backupDatabaseBeforeMigration(database, existed) {
@@ -1578,21 +1693,41 @@ function crmDetail(row) {
 }
 
 function portfolioItem(row, crm = false) {
+  const media = portfolioMediaRows(row.id).map((entry) => portfolioMedia(entry, crm));
+  const cover = media[0] || null;
   return {
     id:row.id,
     slug:row.slug,
     title:row.title,
     caption:row.caption || "",
-    altText:row.alt_text || "",
+    altText:cover?.altText || row.alt_text || "",
     bodyZone:row.body_zone || "",
     style:row.style || "",
     year:row.year || null,
     status:row.status,
     sortOrder:Number(row.sort_order),
-    imageUrl:row.image_path ? (crm ? `/api/crm/portfolio/${row.id}/image?v=${encodeURIComponent(row.updated_at)}` : `/${row.image_path}`) : null,
+    imageUrl:cover?.imageUrl || null,
+    media,
     publishedAt:row.published_at || null,
     createdAt:row.created_at,
     updatedAt:row.updated_at
+  };
+}
+
+function portfolioMediaRows(itemId) {
+  return db.prepare("SELECT * FROM portfolio_media WHERE portfolio_item_id=? ORDER BY sort_order ASC, created_at ASC").all(itemId);
+}
+
+function portfolioMedia(row, crm = false) {
+  const version = encodeURIComponent(row.updated_at);
+  return {
+    id:row.id,
+    altText:row.alt_text || "",
+    sortOrder:Number(row.sort_order),
+    width:row.width || null,
+    height:row.height || null,
+    imageUrl:crm ? `/api/crm/portfolio/${row.portfolio_item_id}/media/${row.id}?v=${version}` : `/${row.display_path}`,
+    thumbUrl:crm ? `/api/crm/portfolio/${row.portfolio_item_id}/media/${row.id}?variant=thumb&v=${version}` : `/${row.display_path}`
   };
 }
 
@@ -1611,18 +1746,71 @@ function validatePortfolioInput(payload, { partial, current } = {}) {
   return { value:{ title, caption:caption || null, altText:altText || "", bodyZone:bodyZone || null, style:style || null, year } };
 }
 
-function savePortfolioImage(itemId, dataUrl) {
+async function createPortfolioMedia(itemId, dataUrl, altText = "") {
+  const count = Number(db.prepare("SELECT COUNT(*) AS count FROM portfolio_media WHERE portfolio_item_id=?").get(itemId).count);
+  if (count >= 12) {
+    const error = new Error("portfolio_media_limit");
+    error.code = "portfolio_media_limit";
+    throw error;
+  }
   const parsed = parseDataUrl(dataUrl);
   if (!parsed || parsed.buffer.length > 8 * 1024 * 1024 || !hasImageSignature(parsed.buffer, parsed.mimeType)) {
     const error = new Error("invalid_portfolio_image");
     error.code = "invalid_portfolio_image";
     throw error;
   }
-  for (const extension of ["jpg", "png", "webp"]) fs.rmSync(path.join(portfolioUploadsDir, `${itemId}.${extension}`), { force:true });
-  const filename = `${itemId}.${mimeExtension(parsed.mimeType)}`;
-  const absolutePath = path.join(portfolioUploadsDir, filename);
-  fs.writeFileSync(absolutePath, parsed.buffer, { mode:0o600 });
-  return { filePath:path.relative(rootDir, absolutePath).replace(/\\/g, "/"), mimeType:parsed.mimeType };
+  const mediaId = `media_${crypto.randomUUID()}`;
+  const filenames = { original:`${mediaId}.webp`, display:`${mediaId}.webp`, thumb:`${mediaId}.webp` };
+  const paths = {
+    original:path.join(portfolioOriginalsDir, filenames.original),
+    display:path.join(portfolioPublicDir, filenames.display),
+    thumb:path.join(portfolioThumbsDir, filenames.thumb)
+  };
+  try {
+    const source = () => sharp(parsed.buffer, { limitInputPixels:40_000_000 }).rotate();
+    const metadata = await source().metadata();
+    if (!metadata.width || !metadata.height || metadata.width * metadata.height > 40_000_000) throw new Error("invalid_dimensions");
+    await Promise.all([
+      source().resize({ width:4000, height:4000, fit:"inside", withoutEnlargement:true }).webp({ quality:95 }).toFile(paths.original),
+      source().resize({ width:2200, height:2200, fit:"inside", withoutEnlargement:true }).webp({ quality:88 }).toFile(paths.display),
+      source().resize({ width:640, height:640, fit:"cover", position:"centre", withoutEnlargement:false }).webp({ quality:78 }).toFile(paths.thumb)
+    ]);
+    for (const file of Object.values(paths)) fs.chmodSync(file, 0o600);
+    const displayMetadata = await sharp(paths.display).metadata();
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO portfolio_media (id, portfolio_item_id, sort_order, original_path, display_path, thumb_path, mime_type, alt_text, width, height, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'image/webp', ?, ?, ?, ?, ?)`)
+      .run(mediaId, itemId, count, relativeManagedPath(paths.original), relativeManagedPath(paths.display), relativeManagedPath(paths.thumb), normalizeShortText(altText, 200), displayMetadata.width || null, displayMetadata.height || null, now, now);
+    touchPortfolioItem(itemId, now);
+    return db.prepare("SELECT * FROM portfolio_media WHERE id=?").get(mediaId);
+  } catch (cause) {
+    for (const file of Object.values(paths)) fs.rmSync(file, { force:true });
+    if (cause?.code === "portfolio_media_limit") throw cause;
+    const error = new Error("invalid_portfolio_image");
+    error.code = "invalid_portfolio_image";
+    throw error;
+  }
+}
+
+function relativeManagedPath(filePath) {
+  return path.relative(rootDir, filePath).replace(/\\/g, "/");
+}
+
+function absoluteManagedPath(relativePath) {
+  const absolute = path.resolve(rootDir, String(relativePath || ""));
+  const root = path.resolve(portfolioUploadsDir) + path.sep;
+  return absolute.startsWith(root) ? absolute : null;
+}
+
+function removePortfolioMediaFiles(media) {
+  for (const relativePath of new Set([media.original_path, media.display_path, media.thumb_path])) {
+    const absolute = absoluteManagedPath(relativePath);
+    if (absolute) fs.rmSync(absolute, { force:true });
+  }
+}
+
+function touchPortfolioItem(itemId, now = new Date().toISOString()) {
+  db.prepare("UPDATE portfolio_items SET updated_at=? WHERE id=?").run(now, itemId);
 }
 
 function hasImageSignature(buffer, mimeType) {

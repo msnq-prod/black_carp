@@ -23,7 +23,7 @@
     client_message: "Сообщение клиента"
   };
   const state = { status: "", q: "", cursor: null, items: [], counts: {}, selectedId: null, selected: null, loading: false, pendingReload: false, selectionVersion: 0, saving: false };
-  const portfolio = { status:"", q:"", items:[], counts:{}, current:null, imageDataUrl:null, loading:false, dirty:false };
+  const portfolio = { status:"", q:"", items:[], counts:{}, current:null, pendingMedia:[], mediaOrder:[], loading:false, saving:false, dirty:false };
   const requestTimeoutMs = 15_000;
   const attachmentObjectUrls = new Set();
   let attachmentHydrationVersion = 0;
@@ -34,6 +34,19 @@
     "X-Telegram-Init-Data": tg?.initData || "",
     ...(devMasterId ? { "X-Test-Master-Id": devMasterId } : {})
   });
+
+  function readFileDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("image_read_failed"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function pendingMediaId() {
+    return `pending_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`}`;
+  }
 
   async function request(path, options = {}) {
     const controller = new AbortController();
@@ -67,7 +80,10 @@
       title_required: "Укажите название работы.",
       invalid_year: "Проверьте год работы.",
       invalid_portfolio_image: "Выберите корректное JPG, PNG или WebP до 8 МБ.",
-      item_incomplete: "Для публикации нужны изображение, название и alt-текст.",
+      portfolio_media_limit: "В одной работе может быть не больше 12 изображений.",
+      published_media_required: "У опубликованной работы должен остаться хотя бы один кадр.",
+      media_order_conflict: "Состав кадров изменился. Обновите работу и повторите.",
+      item_incomplete: "Для публикации нужны название, изображения и alt-текст каждого кадра.",
       archived_item: "Архивную работу нельзя редактировать.",
       forbidden: "У этого Telegram-профиля нет доступа.",
       invalid_init_data: "Сессия Telegram устарела. Откройте CRM из бота заново."
@@ -489,7 +505,8 @@
       const badge = item.status === "published" ? "В ЭФИРЕ" : item.status === "draft" ? "ЧЕРНОВИК" : "АРХИВ";
       const badgeClass = item.status === "draft" ? "work-badge--draft" : item.status === "archived" ? "work-badge--archived" : "";
       const meta = [item.bodyZone, item.style, item.year].filter(Boolean).join(" · ") || "Без описания";
-      return `<article class="work-card" data-portfolio-id="${escapeHtml(item.id)}"><button class="work-card__open" type="button" data-open-portfolio="${escapeHtml(item.id)}"><div class="work-card__media">${item.imageUrl ? `<img data-portfolio-image="${escapeHtml(item.imageUrl)}" alt="">` : ""}<span class="work-badge ${badgeClass}">${badge}</span></div><div class="work-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(meta)}</small></div></button>${canReorder && item.status !== "archived" ? `<div class="work-order"><button type="button" data-move-portfolio="-1" aria-label="Поднять" ${index === 0 ? "disabled" : ""}>↑</button><button type="button" data-move-portfolio="1" aria-label="Опустить" ${index === portfolio.items.filter((row) => row.status !== "archived").length - 1 ? "disabled" : ""}>↓</button></div>` : ""}</article>`;
+      const cover = item.media?.[0];
+      return `<article class="work-card" data-portfolio-id="${escapeHtml(item.id)}"><button class="work-card__open" type="button" data-open-portfolio="${escapeHtml(item.id)}"><div class="work-card__media">${cover?.thumbUrl ? `<img data-portfolio-image="${escapeHtml(cover.thumbUrl)}" alt="">` : ""}<span class="work-badge ${badgeClass}">${badge}</span><span class="work-media-count">${Number(item.media?.length || 0)}</span></div><div class="work-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(meta)}</small></div></button>${canReorder && item.status !== "archived" ? `<div class="work-order"><button type="button" data-move-portfolio="-1" aria-label="Поднять" ${index === 0 ? "disabled" : ""}>↑</button><button type="button" data-move-portfolio="1" aria-label="Опустить" ${index === portfolio.items.filter((row) => row.status !== "archived").length - 1 ? "disabled" : ""}>↓</button></div>` : ""}</article>`;
     }).join("");
     hydratePortfolioImages(root);
   }
@@ -526,24 +543,45 @@
 
   function clearPortfolioForm() {
     portfolio.current = null;
-    portfolio.imageDataUrl = null;
+    portfolio.pendingMedia = [];
+    portfolio.mediaOrder = [];
     portfolio.dirty = false;
     $("#portfolioForm").reset();
-    $("#portfolioPreview").innerHTML = "<span>Добавьте изображение</span>";
     $("#archivePortfolioButton").hidden = true;
     $("#publishPortfolioButton").textContent = "Опубликовать";
     $("#portfolioFeedback").textContent = "";
+    renderPortfolioMedia();
   }
 
-  async function showPortfolioImage(item) {
-    if (!item?.imageUrl) { $("#portfolioPreview").innerHTML = "<span>Добавьте изображение</span>"; return; }
-    try {
-      const response = await request(item.imageUrl);
-      if (!response.ok) throw new Error("image_failed");
-      const url = URL.createObjectURL(await response.blob());
-      attachmentObjectUrls.add(url);
-      $("#portfolioPreview").innerHTML = `<img src="${url}" alt="">`;
-    } catch { $("#portfolioPreview").innerHTML = "<span>Изображение недоступно</span>"; }
+  function portfolioMediaByKey(key) {
+    return portfolio.current?.media?.find((item) => item.id === key) || portfolio.pendingMedia.find((item) => item.localId === key) || null;
+  }
+
+  function renderPortfolioMedia() {
+    const root = $("#portfolioMediaGrid");
+    $("#portfolioMediaCount").textContent = `${portfolio.mediaOrder.length} / 12`;
+    if (!portfolio.mediaOrder.length) {
+      root.innerHTML = '<p class="media-empty">Добавьте один или несколько кадров этой работы.</p>';
+      return;
+    }
+    root.innerHTML = portfolio.mediaOrder.map((key, index) => {
+      const item = portfolioMediaByKey(key);
+      if (!item) return "";
+      const pending = Boolean(item.localId);
+      const image = pending ? `<img src="${item.dataUrl}" alt="">` : `<img data-portfolio-image="${escapeHtml(item.thumbUrl || item.imageUrl)}" alt="">`;
+      return `<article class="media-card ${item.error ? "has-error" : ""}" data-media-key="${escapeHtml(key)}">
+        <div class="media-card__preview">${image}${index === 0 ? '<span class="cover-badge">ОБЛОЖКА</span>' : ""}${pending ? '<span class="pending-badge">НОВЫЙ</span>' : ""}</div>
+        <label class="media-alt">Alt-текст<input type="text" maxlength="200" value="${escapeHtml(item.altText || "")}" data-media-alt="${escapeHtml(key)}" placeholder="Что изображено на фото"></label>
+        <div class="media-card__actions">
+          <button type="button" data-media-action="cover" aria-label="Сделать обложкой" ${index === 0 ? "disabled" : ""}>★</button>
+          <button type="button" data-media-action="up" aria-label="Переместить влево" ${index === 0 ? "disabled" : ""}>←</button>
+          <button type="button" data-media-action="down" aria-label="Переместить вправо" ${index === portfolio.mediaOrder.length - 1 ? "disabled" : ""}>→</button>
+          <button type="button" class="media-remove" data-media-action="remove" aria-label="Удалить кадр">×</button>
+        </div>
+        ${item.error ? `<p class="media-error">${escapeHtml(item.error)}</p>` : ""}
+      </article>`;
+    }).join("");
+    hydratePortfolioImages(root);
   }
 
   async function openPortfolioEditor(id = null, historyMode = "push") {
@@ -557,10 +595,11 @@
       try {
         const result = await api(`/api/crm/portfolio/${encodeURIComponent(id)}`);
         portfolio.current = result.item;
-        for (const name of ["title", "caption", "altText", "bodyZone", "style", "year"]) $("#portfolioForm").elements[name].value = result.item[name] || "";
+        portfolio.mediaOrder = result.item.media.map((item) => item.id);
+        for (const name of ["title", "caption", "bodyZone", "style", "year"]) $("#portfolioForm").elements[name].value = result.item[name] || "";
         $("#archivePortfolioButton").hidden = result.item.status === "archived";
         $("#publishPortfolioButton").textContent = result.item.status === "published" ? "Снять с публикации" : "Опубликовать";
-        await showPortfolioImage(result.item);
+        renderPortfolioMedia();
       } catch (error) { setPortfolioFeedback(humanError(error), true); }
     }
     portfolio.dirty = false;
@@ -578,27 +617,70 @@
     const form = new FormData($("#portfolioForm"));
     return {
       title:String(form.get("title") || "").trim(), caption:String(form.get("caption") || "").trim(),
-      altText:String(form.get("altText") || "").trim(), bodyZone:String(form.get("bodyZone") || "").trim(),
+      bodyZone:String(form.get("bodyZone") || "").trim(),
       style:String(form.get("style") || "").trim(), year:form.get("year") || null,
-      ...(portfolio.imageDataUrl ? { imageDataUrl:portfolio.imageDataUrl } : {})
     };
   }
 
   async function savePortfolio() {
+    if (portfolio.saving) return null;
+    portfolio.saving = true;
+    $("#portfolioForm").classList.add("is-saving");
     setPortfolioFeedback("Сохраняем…");
     const path = portfolio.current ? `/api/crm/portfolio/${portfolio.current.id}` : "/api/crm/portfolio";
     const method = portfolio.current ? "PATCH" : "POST";
+    const altByKey = new Map(portfolio.mediaOrder.map((key) => [key, portfolioMediaByKey(key)?.altText || ""]));
     try {
       const result = await api(path, { method, body:JSON.stringify(portfolioPayload()) });
       portfolio.current = result.item;
-      portfolio.imageDataUrl = null;
+      const desiredKeys = [...portfolio.mediaOrder];
+      const uploadedIds = new Map();
+      for (const media of portfolio.current.media) {
+        const altText = altByKey.get(media.id) ?? media.altText;
+        if (altText !== media.altText) {
+          const updated = await api(`/api/crm/portfolio/${portfolio.current.id}/media/${media.id}`, { method:"PATCH", body:JSON.stringify({ altText }) });
+          portfolio.current = updated.item;
+        }
+      }
+      const failed = [];
+      for (const pending of [...portfolio.pendingMedia]) {
+        try {
+          const uploaded = await api(`/api/crm/portfolio/${portfolio.current.id}/media`, { method:"POST", body:JSON.stringify({ imageDataUrl:pending.dataUrl, altText:altByKey.get(pending.localId) || "" }) });
+          uploadedIds.set(pending.localId, uploaded.media.id);
+          portfolio.current = uploaded.item;
+        } catch (error) {
+          pending.error = humanError(error);
+          failed.push(pending);
+        }
+      }
+      if (failed.length) {
+        portfolio.pendingMedia = failed;
+        const currentIds = new Set(portfolio.current.media.map((item) => item.id));
+        const failedIds = new Set(failed.map((item) => item.localId));
+        portfolio.mediaOrder = desiredKeys.map((key) => uploadedIds.get(key) || key).filter((key) => currentIds.has(key) || failedIds.has(key));
+        portfolio.dirty = true;
+        renderPortfolioMedia();
+        setPortfolioFeedback("Часть изображений не загрузилась. Исправьте отмеченные кадры и повторите.", true);
+        return null;
+      }
+      const desiredIds = desiredKeys.map((key) => uploadedIds.get(key) || key);
+      if (desiredIds.length > 1) {
+        const reordered = await api(`/api/crm/portfolio/${portfolio.current.id}/media/reorder`, { method:"POST", body:JSON.stringify({ ids:desiredIds }) });
+        portfolio.current = reordered.item;
+      } else {
+        portfolio.current = (await api(`/api/crm/portfolio/${portfolio.current.id}`)).item;
+      }
+      portfolio.pendingMedia = [];
+      portfolio.mediaOrder = portfolio.current.media.map((item) => item.id);
       portfolio.dirty = false;
       $("#archivePortfolioButton").hidden = false;
       updateSectionUrl("portfolio", result.item.id, "replace");
       setPortfolioFeedback("Сохранено");
+      renderPortfolioMedia();
       await loadPortfolio();
-      return result.item;
+      return portfolio.current;
     } catch (error) { setPortfolioFeedback(humanError(error), true); return null; }
+    finally { portfolio.saving = false; $("#portfolioForm").classList.remove("is-saving"); }
   }
 
   async function closePortfolioEditor(historyMode = "push") {
@@ -698,12 +780,55 @@
   $("#portfolioBack").addEventListener("click", () => closePortfolioEditor());
   $("#portfolioForm").addEventListener("input", () => { portfolio.dirty = true; setPortfolioFeedback(""); });
   $("#portfolioForm").addEventListener("submit", async (event) => { event.preventDefault(); await savePortfolio(); });
-  $("#portfolioImage").addEventListener("change", (event) => {
-    const file = event.target.files?.[0];
-    if (!file || !["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 8 * 1024 * 1024) { setPortfolioFeedback("Выберите JPG, PNG или WebP до 8 МБ.", true); return; }
-    const reader = new FileReader();
-    reader.onload = () => { portfolio.imageDataUrl = String(reader.result); portfolio.dirty = true; $("#portfolioPreview").innerHTML = `<img src="${portfolio.imageDataUrl}" alt="">`; setPortfolioFeedback(""); };
-    reader.readAsDataURL(file);
+  $("#portfolioImage").addEventListener("change", async (event) => {
+    const files = [...(event.target.files || [])];
+    event.target.value = "";
+    const available = 12 - portfolio.mediaOrder.length;
+    if (!files.length) return;
+    if (files.length > available) { setPortfolioFeedback(`Можно добавить ещё ${available} изображений.`, true); return; }
+    const invalid = files.find((file) => !["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 8 * 1024 * 1024);
+    if (invalid) { setPortfolioFeedback("Выберите JPG, PNG или WebP до 8 МБ.", true); return; }
+    const additions = await Promise.all(files.map(async (file) => ({ localId:pendingMediaId(), dataUrl:await readFileDataUrl(file), altText:"", error:"" })));
+    portfolio.pendingMedia.push(...additions);
+    portfolio.mediaOrder.push(...additions.map((item) => item.localId));
+    portfolio.dirty = true;
+    setPortfolioFeedback("");
+    renderPortfolioMedia();
+  });
+  $("#portfolioMediaGrid").addEventListener("input", (event) => {
+    const input = event.target.closest("[data-media-alt]");
+    if (!input) return;
+    const item = portfolioMediaByKey(input.dataset.mediaAlt);
+    if (item) item.altText = input.value;
+    portfolio.dirty = true;
+    setPortfolioFeedback("");
+  });
+  $("#portfolioMediaGrid").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-media-action]");
+    if (!button || portfolio.saving) return;
+    const card = button.closest("[data-media-key]");
+    const key = card?.dataset.mediaKey;
+    const index = portfolio.mediaOrder.indexOf(key);
+    if (index < 0) return;
+    const action = button.dataset.mediaAction;
+    if (action === "cover") portfolio.mediaOrder.unshift(portfolio.mediaOrder.splice(index, 1)[0]);
+    if (action === "up" && index > 0) [portfolio.mediaOrder[index - 1], portfolio.mediaOrder[index]] = [portfolio.mediaOrder[index], portfolio.mediaOrder[index - 1]];
+    if (action === "down" && index < portfolio.mediaOrder.length - 1) [portfolio.mediaOrder[index + 1], portfolio.mediaOrder[index]] = [portfolio.mediaOrder[index], portfolio.mediaOrder[index + 1]];
+    if (action === "remove") {
+      if (!window.confirm("Удалить этот кадр из работы?")) return;
+      const pending = portfolio.pendingMedia.find((item) => item.localId === key);
+      if (pending) portfolio.pendingMedia = portfolio.pendingMedia.filter((item) => item.localId !== key);
+      else if (portfolio.current) {
+        try {
+          const result = await api(`/api/crm/portfolio/${portfolio.current.id}/media/${encodeURIComponent(key)}`, { method:"DELETE" });
+          portfolio.current = result.item;
+        } catch (error) { setPortfolioFeedback(humanError(error), true); return; }
+      }
+      portfolio.mediaOrder.splice(index, 1);
+    }
+    portfolio.dirty = true;
+    setPortfolioFeedback("");
+    renderPortfolioMedia();
   });
   $("#publishPortfolioButton").addEventListener("click", togglePortfolioPublish);
   $("#archivePortfolioButton").addEventListener("click", async () => {

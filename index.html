@@ -7,7 +7,7 @@
     <meta name="black-carp-bot-username" content="blackcarp_bot">
     <title>Black Carp — авторская графика</title>
     <link rel="preload" as="image" href="assets/media/work-hero-01.jpg">
-    <link rel="stylesheet" href="styles.css?v=booking-20260715a">
+    <link rel="stylesheet" href="styles.css?v=portfolio-gallery-20260716b">
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -126,79 +126,9 @@
 
       <section class="view view-works" data-view="works" aria-label="Работы">
         <div class="works-feed" id="worksFeed">
-      <article class="work-slide">
-        <img src="assets/media/work-hero-01.jpg" alt="Графическая татуировка на предплечье" loading="eager">
-        <div class="slide-index">01 / 08</div>
-        <div class="slide-caption">
-          <h2>Nocturne I</h2>
-          <p>forearm / graphic / 2026</p>
+          <div class="works-state" role="status"><span class="works-loader" aria-hidden="true"></span><p>Загружаем работы…</p></div>
         </div>
-      </article>
-
-      <article class="work-slide">
-        <img src="assets/media/work-hero-02.jpg" alt="Графическая татуировка на спине" loading="lazy">
-        <div class="slide-index">02 / 08</div>
-        <div class="slide-caption">
-          <h2>Arc Study</h2>
-          <p>back / graphic / 2026</p>
-        </div>
-      </article>
-
-      <article class="work-slide">
-        <img src="assets/media/work-hero-03.jpg" alt="Макро-фрагмент графической татуировки" loading="lazy">
-        <div class="slide-index">03 / 08</div>
-        <div class="slide-caption">
-          <h2>Quiet Line</h2>
-          <p>arm detail / fine line / 2026</p>
-        </div>
-      </article>
-
-      <article class="work-slide">
-        <img src="assets/media/sketch-process.png" alt="Эскиз графической татуировки на бумаге" loading="lazy">
-        <div class="slide-index">04 / 08</div>
-        <div class="slide-caption">
-          <h2>Paper Trace</h2>
-          <p>sketch / process / 2026</p>
-        </div>
-      </article>
-
-      <article class="work-slide">
-        <img src="assets/media/work-hero-01.jpg" alt="Графическая татуировка на предплечье" loading="lazy">
-        <div class="slide-index">05 / 08</div>
-        <div class="slide-caption">
-          <h2>Axis</h2>
-          <p>forearm / graphic / 2025</p>
-        </div>
-      </article>
-
-      <article class="work-slide">
-        <img src="assets/media/work-hero-02.jpg" alt="Графическая татуировка на плече" loading="lazy">
-        <div class="slide-index">06 / 08</div>
-        <div class="slide-caption">
-          <h2>Shoulder Field</h2>
-          <p>shoulder / graphic / 2025</p>
-        </div>
-      </article>
-
-      <article class="work-slide">
-        <img src="assets/media/work-hero-03.jpg" alt="Деталь татуировки на коже" loading="lazy">
-        <div class="slide-index">07 / 08</div>
-        <div class="slide-caption">
-          <h2>Skin Map</h2>
-          <p>detail / dotwork / 2026</p>
-        </div>
-      </article>
-
-      <article class="work-slide">
-        <img src="assets/media/sketch-process.png" alt="Процесс работы с эскизом" loading="lazy">
-        <div class="slide-index">08 / 08</div>
-        <div class="slide-caption">
-          <h2>Draft 04</h2>
-          <p>paper / composition / 2026</p>
-        </div>
-      </article>
-    </div>
-        <button type="button" class="works-top-button" id="worksTopButton" aria-label="Наверх">
+        <button type="button" class="works-top-button" id="worksTopButton" aria-label="Наверх" hidden>
           ↑
         </button>
       </section>
@@ -513,6 +443,19 @@
           </div>
         </section>
       </div>
+
+      <div class="portfolio-lightbox" id="portfolioLightbox" hidden aria-hidden="true">
+        <div class="portfolio-lightbox__backdrop" data-lightbox-close></div>
+        <section class="portfolio-lightbox__dialog" role="dialog" aria-modal="true" aria-labelledby="portfolioLightboxTitle">
+          <header class="portfolio-lightbox__header">
+            <div><p id="portfolioLightboxTitle">Работа</p><span id="portfolioLightboxCounter">1 / 1</span></div>
+            <button type="button" aria-label="Закрыть просмотр" data-lightbox-close>×</button>
+          </header>
+          <div class="portfolio-lightbox__stage" id="portfolioLightboxStage"></div>
+          <button class="portfolio-lightbox__arrow portfolio-lightbox__arrow--prev" type="button" aria-label="Предыдущий кадр" data-lightbox-step="-1">‹</button>
+          <button class="portfolio-lightbox__arrow portfolio-lightbox__arrow--next" type="button" aria-label="Следующий кадр" data-lightbox-step="1">›</button>
+        </section>
+      </div>
     </main>
 
     <nav class="bottom-nav" aria-label="Основная навигация">
@@ -544,7 +487,7 @@
       </button>
     </nav>
 
-    <script src="script.js?v=portfolio-20260716a"></script>
+    <script src="script.js?v=portfolio-gallery-20260716b"></script>
 
 
 </body></html>
